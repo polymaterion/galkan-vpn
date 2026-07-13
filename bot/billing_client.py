@@ -1,0 +1,150 @@
+"""
+HTTP client for the Billing Service REST API.
+The bot uses this to interact with billing without knowing any DB or VPN details.
+"""
+from __future__ import annotations
+
+import logging
+from typing import Any, Optional
+
+import httpx
+
+from bot.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+class BillingClient:
+    def __init__(self):
+        self._base = settings.BILLING_BASE_URL.rstrip("/")
+        self._headers = {
+            "X-Billing-Key": settings.BILLING_SECRET_KEY,
+            "Content-Type": "application/json",
+        }
+
+    def _client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            base_url=self._base,
+            headers=self._headers,
+            timeout=30.0,
+        )
+
+    async def get_plan(self) -> Optional[dict]:
+        async with self._client() as c:
+            resp = await c.get("/api/v1/subscriptions/plan")
+            resp.raise_for_status()
+            return resp.json()
+
+    async def get_subscription(self, telegram_id: int) -> Optional[dict]:
+        async with self._client() as c:
+            resp = await c.get("/api/v1/subscriptions/my", params={"telegram_id": telegram_id})
+            resp.raise_for_status()
+            return resp.json()
+
+    async def handle_stars_payment(
+        self,
+        telegram_id: int,
+        username: Optional[str],
+        first_name: Optional[str],
+        last_name: Optional[str],
+        charge_id: str,
+        total_amount: int,
+        plan_id: Optional[int] = None,
+    ) -> dict:
+        async with self._client() as c:
+            resp = await c.post(
+                "/api/v1/payments/stars",
+                json={
+                    "telegram_id": telegram_id,
+                    "username": username,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "telegram_payment_charge_id": charge_id,
+                    "total_amount": total_amount,
+                    "plan_id": plan_id,
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def handle_usdt_payment(
+        self,
+        telegram_id: int,
+        username: Optional[str],
+        first_name: Optional[str],
+        last_name: Optional[str],
+        invoice_id: str,
+        amount: float,
+        plan_id: Optional[int] = None,
+    ) -> dict:
+        async with self._client() as c:
+            resp = await c.post(
+                "/api/v1/payments/usdt",
+                json={
+                    "telegram_id": telegram_id,
+                    "username": username,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "invoice_id": invoice_id,
+                    "amount": amount,
+                    "currency": "USDT",
+                    "plan_id": plan_id,
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    # --- Admin helpers ---
+
+    async def admin_list_users(self, offset: int = 0) -> dict:
+        async with self._client() as c:
+            resp = await c.get("/api/v1/admin/users", params={"offset": offset, "limit": 20})
+            resp.raise_for_status()
+            return resp.json()
+
+    async def admin_list_subscriptions(self, offset: int = 0) -> dict:
+        async with self._client() as c:
+            resp = await c.get(
+                "/api/v1/admin/subscriptions", params={"offset": offset, "limit": 20}
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def admin_list_payments(self, offset: int = 0) -> dict:
+        async with self._client() as c:
+            resp = await c.get(
+                "/api/v1/admin/payments", params={"offset": offset, "limit": 20}
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def admin_list_servers(self) -> dict:
+        async with self._client() as c:
+            resp = await c.get("/api/v1/admin/servers")
+            resp.raise_for_status()
+            return resp.json()
+
+    async def admin_extend_subscription(self, sub_id: int, days: int) -> dict:
+        async with self._client() as c:
+            resp = await c.post(
+                f"/api/v1/admin/subscriptions/{sub_id}/extend", json={"days": days}
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def admin_disable_subscription(self, sub_id: int) -> dict:
+        async with self._client() as c:
+            resp = await c.post(f"/api/v1/admin/subscriptions/{sub_id}/disable")
+            resp.raise_for_status()
+            return resp.json()
+
+    async def admin_set_server_status(self, server_id: int, status: str) -> dict:
+        async with self._client() as c:
+            resp = await c.patch(
+                f"/api/v1/admin/servers/{server_id}", json={"status": status}
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+
+billing_client = BillingClient()
