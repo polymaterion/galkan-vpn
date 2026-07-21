@@ -1,16 +1,61 @@
 """
-Seed script: creates one default plan and two sample VPN servers.
+Seed script: creates one default plan and any VPN servers configured via env vars.
 Run once after migrate.
+
+VPN servers are picked up dynamically from env vars of the form:
+  VPN_SERVER{N}_URL, VPN_SERVER{N}_KEY  (N = 1, 2, 3, ...)
+  VPN_SERVER{N}_NAME, VPN_SERVER{N}_REGION, VPN_SERVER{N}_WEIGHT  (optional)
+
+Only servers with both *_URL and *_KEY actually set (non-empty, not a leftover
+placeholder) are created. This means:
+  - With just VPN_SERVER1_URL/VPN_SERVER1_KEY set, only one server is seeded.
+  - To add more servers later, either add VPN_SERVER2_URL/VPN_SERVER2_KEY (etc.)
+    to .env *before* the very first run of this script, or — since this script
+    only runs once (it skips seeding if any VpnServer already exists) — use the
+    admin API/bot command to add servers afterwards:
+      POST /api/v1/admin/servers   (see api/routers/admin.py)
+      /add_server command in the bot admin panel
 """
 import asyncio
 import os
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from models.models import Plan, VpnServer, VpnServerStatus
 
 DATABASE_URL = os.environ["DATABASE_URL"]
+
+# Values that mean "not actually configured, don't seed this server"
+_PLACEHOLDER_MARKERS = {"", "replace_with_real_api_key"}
+_MAX_SERVER_SLOTS = 10  # how many VPN_SERVER{N}_* slots to scan for
+
+
+def _configured_servers() -> list[VpnServer]:
+    """Build VpnServer objects from VPN_SERVER{N}_* env vars that are actually set."""
+    servers: list[VpnServer] = []
+    for n in range(1, _MAX_SERVER_SLOTS + 1):
+        url = os.getenv(f"VPN_SERVER{n}_URL", "").strip()
+        key = os.getenv(f"VPN_SERVER{n}_KEY", "").strip()
+
+        if not url or not key or key in _PLACEHOLDER_MARKERS:
+            # Not configured — skip silently. This is expected for slots beyond
+            # the servers you actually have (e.g. VPN_SERVER2 when you only run one).
+            continue
+
+        servers.append(
+            VpnServer(
+                name=os.getenv(f"VPN_SERVER{n}_NAME", f"Server {n}"),
+                base_url=url,
+                api_key=key,
+                region=os.getenv(f"VPN_SERVER{n}_REGION", "EU"),
+                weight=int(os.getenv(f"VPN_SERVER{n}_WEIGHT", "100")),
+                status=VpnServerStatus.active,
+                max_clients=int(os.getenv(f"VPN_SERVER{n}_MAX_CLIENTS", "200")),
+                current_clients=0,
+            )
+        )
+    return servers
 
 
 async def seed():
@@ -34,33 +79,21 @@ async def seed():
         else:
             print("[seed] Plan already exists, skip")
 
-        # --- VPN Servers (sample, configure real ones via admin or env) ---
+        # --- VPN Servers: only ones with real config in env ---
         result = await session.execute(select(VpnServer).limit(1))
         if not result.scalar_one_or_none():
-            servers = [
-                VpnServer(
-                    name="Server EU-1",
-                    base_url=os.getenv("VPN_SERVER1_URL", "http://vpn-server-1:4001"),
-                    api_key=os.getenv("VPN_SERVER1_KEY", "replace_with_real_api_key"),
-                    region="EU",
-                    weight=100,
-                    status=VpnServerStatus.active,
-                    max_clients=200,
-                    current_clients=0,
-                ),
-                VpnServer(
-                    name="Server EU-2",
-                    base_url=os.getenv("VPN_SERVER2_URL", "http://vpn-server-2:4001"),
-                    api_key=os.getenv("VPN_SERVER2_KEY", "replace_with_real_api_key"),
-                    region="EU",
-                    weight=80,
-                    status=VpnServerStatus.active,
-                    max_clients=200,
-                    current_clients=0,
-                ),
-            ]
-            session.add_all(servers)
-            print("[seed] Created 2 sample VPN servers")
+            servers = _configured_servers()
+            if servers:
+                session.add_all(servers)
+                names = ", ".join(s.name for s in servers)
+                print(f"[seed] Created {len(servers)} VPN server(s): {names}")
+            else:
+                print(
+                    "[seed] WARNING: no VPN_SERVER*_URL/*_KEY configured in env — "
+                    "no VPN servers were created. Add at least VPN_SERVER1_URL and "
+                    "VPN_SERVER1_KEY to .env and re-run, or add a server later via "
+                    "the admin API/bot."
+                )
         else:
             print("[seed] VPN servers already exist, skip")
 

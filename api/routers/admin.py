@@ -154,6 +154,54 @@ async def update_server_status(
     return {"ok": True, "new_status": server.status.value}
 
 
+class ServerCreateRequest(BaseModel):
+    name: str
+    base_url: str
+    api_key: str
+    region: Optional[str] = "EU"
+    weight: int = 100
+    max_clients: int = 200
+
+
+@router.post("/servers")
+async def create_server(req: ServerCreateRequest, session=Depends(get_db)):
+    """
+    Add a new VPN server. Use this to add servers after the initial deploy —
+    the seed script only runs once, so this is the normal way to grow the
+    server pool later (bot command: /add_server).
+    """
+    repo = VpnServerRepository(session)
+    server = await repo.create(
+        name=req.name,
+        base_url=req.base_url,
+        api_key=req.api_key,
+        region=req.region,
+        weight=req.weight,
+        max_clients=req.max_clients,
+    )
+    return {"ok": True, "id": server.id, "name": server.name}
+
+
+@router.delete("/servers/{server_id}")
+async def delete_server(server_id: int, session=Depends(get_db)):
+    """
+    Remove a server that has no clients on it. Servers with existing clients
+    should be disabled (PATCH status=disabled) instead of deleted, since
+    vpn_clients/subscriptions reference server_id via foreign key.
+    """
+    repo = VpnServerRepository(session)
+    server = await repo.get_by_id(server_id)
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+    if server.current_clients > 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Server has active clients — disable it instead of deleting",
+        )
+    await repo.delete(server_id)
+    return {"ok": True}
+
+
 # ---- Plan price ----
 
 class PlanUpdate(BaseModel):

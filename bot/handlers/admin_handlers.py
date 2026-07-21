@@ -194,3 +194,44 @@ async def cmd_server_status(msg: Message):
         await msg.answer(f"✅ Сервер #{server_id} → {status}")
     except Exception as e:
         await msg.answer(f"❌ Ошибка: {e}")
+
+
+@router.message(Command("add_server"))
+async def cmd_add_server(msg: Message):
+    """
+    Usage: /add_server <name> <base_url> <api_key> [region] [weight] [max_clients]
+
+    Example:
+      /add_server Server-DE http://45.10.20.30 8f2a1c... DE 100 200
+
+    base_url should point at the amnezia-api instance on that VPN server
+    (port 80 through its nginx proxy — not 4001). api_key is the
+    FASTIFY_API_KEY that amnezia-api's setup.sh printed on that server.
+    """
+    if not _is_admin(msg.from_user.id):
+        return
+    parts = msg.text.split()
+    if len(parts) < 4:
+        await msg.answer(
+            "Usage: /add_server <name> <base_url> <api_key> [region] [weight] [max_clients]\n"
+            "Example: /add_server Server-DE http://1.2.3.4 <FASTIFY_API_KEY> DE 100 200"
+        )
+        return
+    try:
+        name = parts[1]
+        base_url = parts[2]
+        api_key = parts[3]
+        region = parts[4] if len(parts) > 4 else "EU"
+        weight = int(parts[5]) if len(parts) > 5 else 100
+        max_clients = int(parts[6]) if len(parts) > 6 else 200
+        result = await billing_client.admin_add_server(
+            name=name,
+            base_url=base_url,
+            api_key=api_key,
+            region=region,
+            weight=weight,
+            max_clients=max_clients,
+        )
+        await msg.answer(f"✅ Сервер #{result['id']} «{result['name']}» добавлен и активен.")
+    except Exception as e:
+        await msg.answer(f"❌ Ошибка: {e}")

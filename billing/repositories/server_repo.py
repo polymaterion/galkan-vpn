@@ -21,6 +21,34 @@ class VpnServerRepository:
         result = await self.session.execute(select(VpnServer).order_by(VpnServer.id))
         return list(result.scalars().all())
 
+    async def create(
+        self,
+        name: str,
+        base_url: str,
+        api_key: str,
+        region: Optional[str] = "EU",
+        weight: int = 100,
+        max_clients: int = 200,
+    ) -> VpnServer:
+        server = VpnServer(
+            name=name,
+            base_url=base_url,
+            api_key=api_key,
+            region=region,
+            weight=weight,
+            status=VpnServerStatus.active,
+            max_clients=max_clients,
+            current_clients=0,
+        )
+        self.session.add(server)
+        await self.session.flush()
+        return server
+
+    async def delete(self, server_id: int) -> None:
+        server = await self.get_by_id(server_id)
+        if server:
+            await self.session.delete(server)
+
     async def get_available_servers(self) -> list[VpnServer]:
         """Return active, not-overloaded servers."""
         result = await self.session.execute(

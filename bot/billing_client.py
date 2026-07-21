@@ -146,5 +146,29 @@ class BillingClient:
             resp.raise_for_status()
             return resp.json()
 
+    async def admin_add_server(
+        self,
+        name: str,
+        base_url: str,
+        api_key: str,
+        region: str = "EU",
+        weight: int = 100,
+        max_clients: int = 200,
+    ) -> dict:
+        async with self._client() as c:
+            resp = await c.post(
+                "/api/v1/admin/servers",
+                json={
+                    "name": name,
+                    "base_url": base_url,
+                    "api_key": api_key,
+                    "region": region,
+                    "weight": weight,
+                    "max_clients": max_clients,
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()
+
 
 billing_client = BillingClient()
