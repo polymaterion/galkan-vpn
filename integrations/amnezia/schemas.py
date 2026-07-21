@@ -28,7 +28,7 @@ class AmneziaClientRecord(BaseModel):
 
 class CreateClientRequest(BaseModel):
     clientName: str
-    protocol: str = "amneziawg"
+    protocol: str = "amneziawg2"
     expiresAt: Optional[int] = None  # unix timestamp or null
 
 

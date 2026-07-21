@@ -127,6 +127,7 @@ async def list_servers(session=Depends(get_db)):
                 "region": s.region,
                 "status": s.status.value,
                 "weight": s.weight,
+                "protocol": s.protocol,
                 "current_clients": s.current_clients,
                 "max_clients": s.max_clients,
                 "load": load_info,
@@ -161,6 +162,7 @@ class ServerCreateRequest(BaseModel):
     region: Optional[str] = "EU"
     weight: int = 100
     max_clients: int = 200
+    protocol: str = "amneziawg2"  # must match protocols enabled on that server
 
 
 @router.post("/servers")
@@ -178,8 +180,9 @@ async def create_server(req: ServerCreateRequest, session=Depends(get_db)):
         region=req.region,
         weight=req.weight,
         max_clients=req.max_clients,
+        protocol=req.protocol,
     )
-    return {"ok": True, "id": server.id, "name": server.name}
+    return {"ok": True, "id": server.id, "name": server.name, "protocol": server.protocol}
 
 
 @router.delete("/servers/{server_id}")

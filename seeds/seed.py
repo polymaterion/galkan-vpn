@@ -5,6 +5,9 @@ Run once after migrate.
 VPN servers are picked up dynamically from env vars of the form:
   VPN_SERVER{N}_URL, VPN_SERVER{N}_KEY  (N = 1, 2, 3, ...)
   VPN_SERVER{N}_NAME, VPN_SERVER{N}_REGION, VPN_SERVER{N}_WEIGHT  (optional)
+  VPN_SERVER{N}_PROTOCOL  (optional, default "amneziawg2" — must match what's
+    actually installed/enabled on that server's amnezia-api instance, see its
+    .env: PROTOCOLS_ENABLED. Wrong value causes 400 Bad Request on client creation.)
 
 Only servers with both *_URL and *_KEY actually set (non-empty, not a leftover
 placeholder) are created. This means:
@@ -53,6 +56,7 @@ def _configured_servers() -> list[VpnServer]:
                 status=VpnServerStatus.active,
                 max_clients=int(os.getenv(f"VPN_SERVER{n}_MAX_CLIENTS", "200")),
                 current_clients=0,
+                protocol=os.getenv(f"VPN_SERVER{n}_PROTOCOL", "amneziawg2"),
             )
         )
     return servers

@@ -121,6 +121,11 @@ class VpnServer(Base, TimestampMixin):
     )
     max_clients: Mapped[int] = mapped_column(Integer, default=500)
     current_clients: Mapped[int] = mapped_column(Integer, default=0)
+    # Which amnezia-api protocol this server has installed/enabled:
+    # "amneziawg", "amneziawg2" or "xray". Must match what's actually running
+    # on that VPN server (check its amnezia-api .env: PROTOCOLS_ENABLED),
+    # otherwise client creation fails with 400 Bad Request.
+    protocol: Mapped[str] = mapped_column(String(32), default="amneziawg2")
 
     vpn_clients: Mapped[list["VpnClient"]] = relationship(back_populates="server")
 

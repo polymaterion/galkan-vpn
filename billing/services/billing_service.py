@@ -279,7 +279,7 @@ class BillingService:
         try:
             req = CreateClientRequest(
                 clientName=client_name,
-                protocol="amneziawg",
+                protocol=server.protocol,
                 expiresAt=None,  # We manage expiry ourselves
             )
             resp = await amnezia.create_client(req)

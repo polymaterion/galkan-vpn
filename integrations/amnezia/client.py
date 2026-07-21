@@ -147,7 +147,7 @@ class AmneziaClient:
         self._raise_for_status(resp)
         return CreateClientResponse.model_validate(resp.json())
 
-    async def delete_client(self, client_id: str, protocol: str = "amneziawg") -> None:
+    async def delete_client(self, client_id: str, protocol: str = "amneziawg2") -> None:
         """DELETE /clients  body: {clientId, protocol}"""
         try:
             async with self._make_client() as client:
@@ -161,7 +161,7 @@ class AmneziaClient:
         self._raise_for_status(resp)
 
     async def update_client(
-        self, client_id: str, req: UpdateClientRequest, protocol: str = "amneziawg"
+        self, client_id: str, req: UpdateClientRequest, protocol: str = "amneziawg2"
     ) -> None:
         """
         PATCH /clients   body: {clientId, protocol, status?, expiresAt?}
@@ -186,10 +186,10 @@ class AmneziaClient:
             return
         self._raise_for_status(resp)
 
-    async def disable_client(self, client_id: str, protocol: str = "amneziawg") -> None:
+    async def disable_client(self, client_id: str, protocol: str = "amneziawg2") -> None:
         await self.update_client(client_id, UpdateClientRequest(status="disabled"), protocol=protocol)
 
-    async def enable_client(self, client_id: str, protocol: str = "amneziawg") -> None:
+    async def enable_client(self, client_id: str, protocol: str = "amneziawg2") -> None:
         await self.update_client(client_id, UpdateClientRequest(status="active"), protocol=protocol)
 
     async def get_client(self, client_id: str) -> Optional[AmneziaClientRecord]:

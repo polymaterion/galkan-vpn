@@ -29,6 +29,7 @@ class VpnServerRepository:
         region: Optional[str] = "EU",
         weight: int = 100,
         max_clients: int = 200,
+        protocol: str = "amneziawg2",
     ) -> VpnServer:
         server = VpnServer(
             name=name,
@@ -39,6 +40,7 @@ class VpnServerRepository:
             status=VpnServerStatus.active,
             max_clients=max_clients,
             current_clients=0,
+            protocol=protocol,
         )
         self.session.add(server)
         await self.session.flush()

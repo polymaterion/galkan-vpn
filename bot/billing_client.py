@@ -154,6 +154,7 @@ class BillingClient:
         region: str = "EU",
         weight: int = 100,
         max_clients: int = 200,
+        protocol: str = "amneziawg2",
     ) -> dict:
         async with self._client() as c:
             resp = await c.post(
@@ -165,6 +166,7 @@ class BillingClient:
                     "region": region,
                     "weight": weight,
                     "max_clients": max_clients,
+                    "protocol": protocol,
                 },
             )
             resp.raise_for_status()
