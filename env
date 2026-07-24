@@ -1,0 +1,46 @@
+# Telegram
+TELEGRAM_TOKEN=8947008085:AAFI-qBojISe3-zojKQeopR8nXaTNdCh8NY
+ADMIN_IDS=7527761374
+
+# PostgreSQL
+POSTGRES_HOST=db
+POSTGRES_PORT=5432
+POSTGRES_DB=vpnbot
+POSTGRES_USER=vpnbot
+POSTGRES_PASSWORD=123martin321iden
+
+# Redis
+REDIS_HOST=redis
+REDIS_PORT=6379
+REDIS_DB=0
+
+# Внутренний секрет между ботом и billing API
+BILLING_SECRET_KEY=123martin321iden
+BILLING_BASE_URL=http://billing:8000
+
+# Публичная страница-редирект в Amnezia (api/routers/connect.py).
+# Должна быть доступна из интернета — порт 8080 нужно открыть в ufw:
+#   ufw allow 8080/tcp
+PUBLIC_BASE_URL=http://149.33.41.147:8080
+PUBLIC_PORT=8080
+
+# Оплата Telegram Stars
+PLAN_PRICE_STARS=100
+
+# Оплата USDT через CryptoPay (опционально)
+CRYPTOPAY_TOKEN=
+CRYPTOPAY_NETWORK=mainnet
+PLAN_PRICE_USDT=3.00
+
+# Тариф
+PLAN_DURATION_DAYS=30
+
+# VPN-сервер (при однокорпусной схеме — тот же сервер).
+# ВАЖНО: именно внешний IP, а не 127.0.0.1 — billing работает в отдельном
+# docker-сетевом пространстве и не видит localhost хоста напрямую.
+VPN_SERVER1_URL=http://149.33.41.147
+VPN_SERVER1_KEY=baa33a127741b5dfdb6eece9e744e74bc40236378f0504bb56fdfbc7be5fc679
+
+ENVIRONMENT=production
+LOG_LEVEL=INFO
+SUPPORT_LINK=https://t.me/xgenic
