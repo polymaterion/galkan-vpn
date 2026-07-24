@@ -47,16 +47,27 @@ def mock_amnezia_client():
         instance = AsyncMock()
         MockClient.return_value = instance
 
-        # Default happy-path responses
+        # Default happy-path responses. Each call returns a DIFFERENT
+        # amnezia_client_id (like the real API would for separate devices) —
+        # a static id would violate the (server_id, amnezia_client_id)
+        # uniqueness constraint as soon as a test provisions a second device.
         from integrations.amnezia.schemas import CreateClientResponse, CreatedClient
-        instance.create_client.return_value = CreateClientResponse(
-            message="Клиент создан",
-            client=CreatedClient(
-                id="test-uuid-1234",
-                config="vpn://eyJ0ZXN0IjoiY29uZmlnIn0=",
-                protocol="amneziawg",
-            ),
-        )
+        import itertools
+        counter = itertools.count(1)
+
+        async def _create_client(*args, **kwargs):
+            n = next(counter)
+            suffix = "" if n == 1 else f"-{n}"
+            return CreateClientResponse(
+                message="Клиент создан",
+                client=CreatedClient(
+                    id=f"test-uuid-1234{suffix}",
+                    config="vpn://eyJ0ZXN0IjoiY29uZmlnIn0=",
+                    protocol="amneziawg",
+                ),
+            )
+
+        instance.create_client.side_effect = _create_client
         instance.enable_client.return_value = None
         instance.disable_client.return_value = None
         instance.delete_client.return_value = None

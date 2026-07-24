@@ -41,6 +41,29 @@ class BillingClient:
             resp.raise_for_status()
             return resp.json()
 
+    async def get_devices(self, telegram_id: int) -> list[dict]:
+        """All devices (subscriptions) this user has ever bought, newest first."""
+        async with self._client() as c:
+            resp = await c.get("/api/v1/subscriptions/devices", params={"telegram_id": telegram_id})
+            resp.raise_for_status()
+            return resp.json()
+
+    async def get_user_language(self, telegram_id: int) -> str:
+        async with self._client() as c:
+            resp = await c.get("/api/v1/users/me", params={"telegram_id": telegram_id})
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("language") or ""
+
+    async def set_user_language(self, telegram_id: int, language: str) -> dict:
+        async with self._client() as c:
+            resp = await c.post(
+                "/api/v1/users/language",
+                json={"telegram_id": telegram_id, "language": language},
+            )
+            resp.raise_for_status()
+            return resp.json()
+
     async def handle_stars_payment(
         self,
         telegram_id: int,
@@ -50,6 +73,8 @@ class BillingClient:
         charge_id: str,
         total_amount: int,
         plan_id: Optional[int] = None,
+        mode: str = "new",
+        target_subscription_id: Optional[int] = None,
     ) -> dict:
         async with self._client() as c:
             resp = await c.post(
@@ -62,6 +87,8 @@ class BillingClient:
                     "telegram_payment_charge_id": charge_id,
                     "total_amount": total_amount,
                     "plan_id": plan_id,
+                    "mode": mode,
+                    "target_subscription_id": target_subscription_id,
                 },
             )
             resp.raise_for_status()
@@ -76,6 +103,8 @@ class BillingClient:
         invoice_id: str,
         amount: float,
         plan_id: Optional[int] = None,
+        mode: str = "new",
+        target_subscription_id: Optional[int] = None,
     ) -> dict:
         async with self._client() as c:
             resp = await c.post(
@@ -89,6 +118,8 @@ class BillingClient:
                     "amount": amount,
                     "currency": "USDT",
                     "plan_id": plan_id,
+                    "mode": mode,
+                    "target_subscription_id": target_subscription_id,
                 },
             )
             resp.raise_for_status()

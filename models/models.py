@@ -86,6 +86,9 @@ class User(Base, TimestampMixin):
     first_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     last_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     is_banned: Mapped[bool] = mapped_column(Boolean, default=False)
+    # None = language not chosen yet (bot shows the picker on /start).
+    # "ru" or "tk" once chosen.
+    language: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
 
     subscriptions: Mapped[list["Subscription"]] = relationship(back_populates="user")
     orders: Mapped[list["Order"]] = relationship(back_populates="user")
@@ -151,6 +154,14 @@ class Payment(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), nullable=False, index=True)
+    # Which subscription (device) this payment ultimately provisioned/renewed.
+    # Set right after the subscription is created/extended. Used to resolve
+    # duplicate/replayed payment events to the exact right device instead of
+    # guessing "latest subscription for user" (unreliable once a user can
+    # have several concurrent devices).
+    subscription_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("subscriptions.id"), nullable=True, index=True
+    )
     provider: Mapped[PaymentProvider] = mapped_column(Enum(PaymentProvider), nullable=False)
     external_id: Mapped[str] = mapped_column(String(512), nullable=False)
     status: Mapped[PaymentStatus] = mapped_column(
@@ -213,7 +224,13 @@ class VpnClient(Base, TimestampMixin):
     status: Mapped[VpnClientStatus] = mapped_column(
         Enum(VpnClientStatus), default=VpnClientStatus.active
     )
-    protocol: Mapped[str] = mapped_column(String(32), default="amneziawg")
+    protocol: Mapped[str] = mapped_column(String(32), default="amneziawg2")
+    # Opaque random token used in the public /connect/{token} redirect link
+    # (see api/routers/connect.py). Never expose amnezia_client_id or api keys
+    # in a public URL — this token is the only thing that travels there.
+    public_token: Mapped[Optional[str]] = mapped_column(
+        String(64), unique=True, nullable=True, index=True
+    )
 
     subscription: Mapped["Subscription"] = relationship(back_populates="vpn_client")
     server: Mapped["VpnServer"] = relationship(back_populates="vpn_clients")

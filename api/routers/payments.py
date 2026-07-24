@@ -5,6 +5,7 @@ after a successful Telegram payment event.
 """
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends
@@ -19,6 +20,8 @@ from models.models import PaymentProvider
 router = APIRouter(dependencies=[Depends(verify_internal_key)])
 _svc = BillingService()
 
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+
 
 class StarsPaymentRequest(BaseModel):
     telegram_id: int
@@ -28,6 +31,8 @@ class StarsPaymentRequest(BaseModel):
     telegram_payment_charge_id: str   # unique ID from Telegram
     total_amount: int                 # in Stars (XTR)
     plan_id: Optional[int] = None
+    mode: str = "new"                 # "new" | "renew"
+    target_subscription_id: Optional[int] = None
 
 
 class UsdtPaymentRequest(BaseModel):
@@ -39,6 +44,8 @@ class UsdtPaymentRequest(BaseModel):
     amount: float
     currency: str = "USDT"
     plan_id: Optional[int] = None
+    mode: str = "new"                 # "new" | "renew"
+    target_subscription_id: Optional[int] = None
 
 
 class PaymentResponse(BaseModel):
@@ -46,15 +53,20 @@ class PaymentResponse(BaseModel):
     status: str
     expires_at: Optional[str]
     config_url: Optional[str]
+    connect_url: Optional[str]  # public one-tap "open in Amnezia" link
 
 
 async def _payment_response(session, sub) -> PaymentResponse:
     vpn_client = await VpnClientRepository(session).get_by_subscription(sub.id)
+    connect_url = None
+    if vpn_client and vpn_client.public_token and PUBLIC_BASE_URL:
+        connect_url = f"{PUBLIC_BASE_URL}/connect/{vpn_client.public_token}"
     return PaymentResponse(
         subscription_id=sub.id,
         status=sub.status.value,
         expires_at=sub.expires_at.isoformat() if sub.expires_at else None,
         config_url=vpn_client.config_url if vpn_client else None,
+        connect_url=connect_url,
     )
 
 
@@ -71,6 +83,8 @@ async def handle_stars_payment(req: StarsPaymentRequest, session=Depends(get_db)
         amount=req.total_amount,
         currency="XTR",
         plan_id=req.plan_id,
+        mode=req.mode,
+        target_subscription_id=req.target_subscription_id,
     )
     return await _payment_response(session, sub)
 
@@ -88,5 +102,7 @@ async def handle_usdt_payment(req: UsdtPaymentRequest, session=Depends(get_db)):
         amount=req.amount,
         currency=req.currency,
         plan_id=req.plan_id,
+        mode=req.mode,
+        target_subscription_id=req.target_subscription_id,
     )
     return await _payment_response(session, sub)

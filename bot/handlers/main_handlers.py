@@ -1,15 +1,19 @@
 """
 Main Telegram bot handlers.
-/start, buy flow, subscription info, config delivery.
+/start, language picker, devices list, buy/renew flow, config delivery.
+
+Hard rule: one payment = one device. Buying always creates a brand-new VPN
+key (mode="new"); renewing extends one specific existing device by id
+(mode="renew"). See billing/services/billing_service.py for the enforcement.
 """
 from __future__ import annotations
 
 import logging
 from io import BytesIO
+from typing import Optional
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     BufferedInputFile,
     CallbackQuery,
@@ -24,9 +28,13 @@ from bot.config import settings
 from bot.keyboards.keyboards import (
     back_to_menu,
     check_usdt_payment,
+    config_ready_keyboard,
+    devices_keyboard,
+    language_picker,
     main_menu,
     payment_method_menu,
 )
+from bot.locales import t
 from bot.payments.crypto_pay import crypto_pay
 from bot.utils import generate_qr
 
@@ -38,82 +46,165 @@ router = Router()
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _user_info(msg_or_cb):
-    user = msg_or_cb.from_user if hasattr(msg_or_cb, "from_user") else msg_or_cb.message.from_user
-    return user
+async def _get_price_stars() -> int:
+    try:
+        plan = await billing_client.get_plan()
+        if plan:
+            return plan["price_stars"]
+    except Exception as e:
+        logger.warning("get_plan failed, using configured default: %s", e)
+    return settings.PLAN_PRICE_STARS
 
 
-async def _send_config(bot: Bot, chat_id: int, config_url: str, expires_at: str | None):
-    """Send the VPN config URL + QR to the user."""
-    expires_text = f"\n⏳ Действует до: <b>{expires_at[:10] if expires_at else '?'}</b>" if expires_at else ""
+async def _main_menu_view(lang: str) -> tuple[str, "InlineKeyboardMarkup"]:
+    price = await _get_price_stars()
+    return t("welcome", lang), main_menu(lang, price)
+
+
+STATUS_EMOJI = {
+    "active": "✅",
+    "expired": "❌",
+    "pending_provisioning": "⏳",
+    "error": "⚠️",
+    "disabled": "🔒",
+    "pending_payment": "💳",
+}
+
+
+async def _deliver_result(bot: Bot, chat_id: int, lang: str, result: dict) -> None:
+    """After a successful payment: show the 'device ready' card with
+    connect/QR buttons, or a 'still provisioning' message if the VPN key
+    isn't ready yet (worker will retry; user checks 'Мои устройства' later)."""
+    config_url = result.get("config_url")
+    connect_url = result.get("connect_url")
+    sub_id = result["subscription_id"]
+    expires = (result.get("expires_at") or "")[:10] or t("unknown_expiry", lang)
+
+    if not config_url:
+        await bot.send_message(
+            chat_id,
+            t("provisioning_pending", lang),
+            reply_markup=back_to_menu(lang),
+        )
+        return
+
+    text = t("config_ready", lang, expires=expires)
+    if not connect_url:
+        # PUBLIC_BASE_URL isn't configured on the server — fall back to a
+        # plain text link the user can paste into Amnezia manually.
+        text += "\n\n" + t("config_link_fallback", lang, config_url=config_url)
 
     await bot.send_message(
-        chat_id,
-        f"✅ <b>Ваш VPN готов!</b>{expires_text}\n\n"
-        f"🔗 Скопируйте ссылку и импортируйте в приложение <b>Amnezia VPN</b>:\n"
-        f"<code>{config_url[:120]}...</code>\n\n"
-        f"📱 Или отсканируйте QR-код ниже.",
-        parse_mode="HTML",
+        chat_id, text, reply_markup=config_ready_keyboard(lang, connect_url, sub_id)
     )
+
+
+async def _send_qr(bot: Bot, chat_id: int, lang: str, telegram_id: int, sub_id: int) -> None:
+    config_url = None
+    try:
+        devices = await billing_client.get_devices(telegram_id)
+        device = next((d for d in devices if d["id"] == sub_id), None)
+        config_url = device.get("config_url") if device else None
+    except Exception as e:
+        logger.warning("Failed to fetch device for QR: %s", e)
+
+    if not config_url:
+        await bot.send_message(chat_id, t("qr_unavailable", lang))
+        return
+
     try:
         qr_bytes = generate_qr(config_url)
         await bot.send_photo(
             chat_id,
             photo=BufferedInputFile(qr_bytes, filename="vpn_qr.png"),
-            caption="📷 QR-код для Amnezia VPN",
+            caption=t("qr_caption", lang),
         )
     except Exception as e:
         logger.warning("QR generation failed: %s", e)
-        # Fallback: send full URL as text
-        await bot.send_message(chat_id, f"<code>{config_url}</code>", parse_mode="HTML")
+        await bot.send_message(chat_id, t("config_link_fallback", lang, config_url=config_url))
 
 
 # ---------------------------------------------------------------------------
-# /start
+# /start & language
 # ---------------------------------------------------------------------------
 
 @router.message(Command("start"))
-async def cmd_start(msg: Message):
-    sub = None
-    try:
-        sub = await billing_client.get_subscription(msg.from_user.id)
-    except Exception:
-        pass
-
-    has_sub = sub is not None and sub.get("status") == "active"
-    await msg.answer(
-        "👋 Добро пожаловать в <b>VPN Bot</b>!\n\n"
-        "🛡 Безопасный VPN на основе AmneziaWG — обходит блокировки без следов.\n\n"
-        "Выберите действие:",
-        parse_mode="HTML",
-        reply_markup=main_menu(has_subscription=has_sub),
-    )
+async def cmd_start(msg: Message, lang: str):
+    if not lang:
+        await msg.answer(t("language_prompt"), reply_markup=language_picker())
+        return
+    text, kb = await _main_menu_view(lang)
+    await msg.answer(text, reply_markup=kb)
 
 
 @router.callback_query(F.data == "start")
-async def cb_start(cb: CallbackQuery):
-    sub = None
+async def cb_start(cb: CallbackQuery, lang: str):
+    text, kb = await _main_menu_view(lang)
+    await cb.message.edit_text(text, reply_markup=kb)
+    await cb.answer()
+
+
+@router.callback_query(F.data == "language_menu")
+async def cb_language_menu(cb: CallbackQuery, lang: str):
+    await cb.message.edit_text(t("language_prompt", lang), reply_markup=language_picker(lang))
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("lang:"))
+async def cb_set_language(cb: CallbackQuery):
+    new_lang = cb.data.split(":", 1)[1]
     try:
-        sub = await billing_client.get_subscription(cb.from_user.id)
-    except Exception:
-        pass
-    has_sub = sub is not None and sub.get("status") == "active"
+        await billing_client.set_user_language(cb.from_user.id, new_lang)
+    except Exception as e:
+        logger.error("Failed to save language for %s: %s", cb.from_user.id, e)
+
+    text, kb = await _main_menu_view(new_lang)
+    await cb.message.edit_text(text, reply_markup=kb)
+    await cb.answer(t("language_saved", new_lang))
+
+
+# ---------------------------------------------------------------------------
+# Devices list ("Мои устройства")
+# ---------------------------------------------------------------------------
+
+@router.callback_query(F.data == "devices")
+async def cb_devices(cb: CallbackQuery, lang: str):
+    try:
+        devices = await billing_client.get_devices(cb.from_user.id)
+    except Exception as e:
+        logger.error("get_devices failed: %s", e)
+        devices = []
+
+    price = await _get_price_stars()
+
+    if not devices:
+        await cb.message.edit_text(
+            t("devices_empty", lang, price=price),
+            reply_markup=main_menu(lang, price),
+        )
+        await cb.answer()
+        return
+
+    lines = [t("devices_title", lang), ""]
+    for i, d in enumerate(devices, start=1):
+        status_text = t(f"status_{d['status']}", lang)
+        expires = (d.get("expires_at") or "")[:10] or t("unknown_expiry", lang)
+        emoji = STATUS_EMOJI.get(d["status"], "❓")
+        lines.append(t("device_line", lang, emoji=emoji, n=i, status=status_text, expires=expires))
+
     await cb.message.edit_text(
-        "👋 Добро пожаловать в <b>VPN Bot</b>!\n\n"
-        "🛡 Безопасный VPN на основе AmneziaWG — обходит блокировки без следов.\n\n"
-        "Выберите действие:",
-        parse_mode="HTML",
-        reply_markup=main_menu(has_subscription=has_sub),
+        "\n".join(lines),
+        reply_markup=devices_keyboard(lang, devices, price),
     )
     await cb.answer()
 
 
 # ---------------------------------------------------------------------------
-# Buy flow
+# Buy a NEW device / Renew an EXISTING device
 # ---------------------------------------------------------------------------
 
-@router.callback_query(F.data == "buy")
-async def cb_buy(cb: CallbackQuery):
+@router.callback_query(F.data == "buy_new")
+async def cb_buy_new(cb: CallbackQuery, lang: str):
     plan = None
     try:
         plan = await billing_client.get_plan()
@@ -121,22 +212,53 @@ async def cb_buy(cb: CallbackQuery):
         logger.error("get_plan failed: %s", e)
 
     if not plan:
-        await cb.answer("Тарифы временно недоступны.", show_alert=True)
+        await cb.answer(t("plan_unavailable", lang), show_alert=True)
         return
 
-    text = (
-        f"💎 <b>{plan['name']}</b>\n\n"
-        f"{plan.get('description', '')}\n\n"
-        f"⏱ Срок: <b>{plan['duration_days']} дней</b>\n"
-        f"⭐ Стоимость: <b>{plan['price_stars']} Telegram Stars</b>\n"
-        f"💵 или <b>${plan['price_usdt']} USDT</b>\n\n"
-        "Выберите способ оплаты:"
+    text = t(
+        "plan_card",
+        lang,
+        name=plan["name"],
+        description=plan.get("description") or "",
+        duration_days=plan["duration_days"],
+        price_stars=plan["price_stars"],
+        price_usdt=plan["price_usdt"],
     )
-    await cb.message.edit_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=payment_method_menu(plan["id"]),
+    await cb.message.edit_text(text, reply_markup=payment_method_menu(lang, "new", None))
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("renew:"))
+async def cb_renew(cb: CallbackQuery, lang: str):
+    sub_id = int(cb.data.split(":")[1])
+    plan = None
+    try:
+        plan = await billing_client.get_plan()
+    except Exception as e:
+        logger.error("get_plan failed: %s", e)
+
+    if not plan:
+        await cb.answer(t("plan_unavailable", lang), show_alert=True)
+        return
+
+    n = sub_id
+    try:
+        devices = await billing_client.get_devices(cb.from_user.id)
+        found = next((i for i, d in enumerate(devices, start=1) if d["id"] == sub_id), None)
+        if found:
+            n = found
+    except Exception:
+        pass
+
+    text = t(
+        "renew_card",
+        lang,
+        n=n,
+        duration_days=plan["duration_days"],
+        price_stars=plan["price_stars"],
+        price_usdt=plan["price_usdt"],
     )
+    await cb.message.edit_text(text, reply_markup=payment_method_menu(lang, "renew", sub_id))
     await cb.answer()
 
 
@@ -145,23 +267,26 @@ async def cb_buy(cb: CallbackQuery):
 # ---------------------------------------------------------------------------
 
 @router.callback_query(F.data.startswith("pay_stars:"))
-async def cb_pay_stars(cb: CallbackQuery, bot: Bot):
-    plan_id = int(cb.data.split(":")[1])
+async def cb_pay_stars(cb: CallbackQuery, bot: Bot, lang: str):
+    _, mode, target = cb.data.split(":")
+    target_id = int(target) if target != "0" else 0
+
     plan = None
     try:
         plan = await billing_client.get_plan()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error("get_plan failed: %s", e)
 
     if not plan:
-        await cb.answer("Ошибка загрузки тарифа.", show_alert=True)
+        await cb.answer(t("plan_load_error", lang), show_alert=True)
         return
 
+    payload = f"stars:{mode}:{target_id}:{plan['id']}"
     await bot.send_invoice(
         chat_id=cb.from_user.id,
         title=plan["name"],
-        description=plan.get("description", "VPN подписка"),
-        payload=f"stars:{plan['id']}:{cb.from_user.id}",
+        description=plan.get("description") or "VPN",
+        payload=payload,
         currency="XTR",
         prices=[LabeledPrice(label=plan["name"], amount=plan["price_stars"])],
         provider_token="",  # Empty for Stars
@@ -176,12 +301,16 @@ async def pre_checkout(pq: PreCheckoutQuery):
 
 
 @router.message(F.successful_payment)
-async def on_successful_payment(msg: Message):
+async def on_successful_payment(msg: Message, lang: str):
     sp: SuccessfulPayment = msg.successful_payment
-    payload_parts = sp.invoice_payload.split(":")
-    plan_id = int(payload_parts[1]) if len(payload_parts) > 1 else None
+    parts = sp.invoice_payload.split(":")
+    # payload format: stars:{mode}:{target_or_0}:{plan_id}
+    mode = parts[1] if len(parts) > 1 else "new"
+    target = int(parts[2]) if len(parts) > 2 and parts[2] != "0" else None
+    plan_id = int(parts[3]) if len(parts) > 3 else None
 
-    await msg.answer("⏳ Оплата получена! Создаём VPN-доступ...", parse_mode="HTML")
+    action_key = "payment_processing_renew" if mode == "renew" else "payment_processing_new"
+    await msg.answer(t("payment_processing", lang, action=t(action_key, lang)))
 
     try:
         result = await billing_client.handle_stars_payment(
@@ -192,25 +321,15 @@ async def on_successful_payment(msg: Message):
             charge_id=sp.telegram_payment_charge_id,
             total_amount=sp.total_amount,
             plan_id=plan_id,
+            mode=mode,
+            target_subscription_id=target,
         )
     except Exception as e:
         logger.error("Stars payment processing failed: %s", e)
-        await msg.answer(
-            "❗ Оплата прошла, но возникла ошибка при создании VPN-доступа.\n"
-            "Обратитесь в поддержку — мы всё исправим!",
-            reply_markup=back_to_menu(),
-        )
+        await msg.answer(t("payment_error", lang), reply_markup=back_to_menu(lang))
         return
 
-    config_url = result.get("config_url")
-    if config_url:
-        await _send_config(msg.bot, msg.chat.id, config_url, result.get("expires_at"))
-    else:
-        await msg.answer(
-            "⏳ VPN-доступ создаётся, это займёт несколько минут.\n"
-            "Вы получите конфиг, как только он будет готов.",
-            reply_markup=back_to_menu(),
-        )
+    await _deliver_result(msg.bot, msg.chat.id, lang, result)
 
 
 # ---------------------------------------------------------------------------
@@ -218,8 +337,10 @@ async def on_successful_payment(msg: Message):
 # ---------------------------------------------------------------------------
 
 @router.callback_query(F.data.startswith("pay_usdt:"))
-async def cb_pay_usdt(cb: CallbackQuery):
-    plan_id = int(cb.data.split(":")[1])
+async def cb_pay_usdt(cb: CallbackQuery, lang: str):
+    _, mode, target = cb.data.split(":")
+    target_id = int(target) if target != "0" else None
+
     plan = None
     try:
         plan = await billing_client.get_plan()
@@ -227,10 +348,7 @@ async def cb_pay_usdt(cb: CallbackQuery):
         pass
 
     if not plan or not settings.CRYPTOPAY_TOKEN:
-        await cb.answer(
-            "USDT оплата временно недоступна. Попробуйте Telegram Stars.",
-            show_alert=True,
-        )
+        await cb.answer(t("usdt_unavailable", lang), show_alert=True)
         return
 
     try:
@@ -238,44 +356,41 @@ async def cb_pay_usdt(cb: CallbackQuery):
             amount=float(plan["price_usdt"]),
             asset="USDT",
             description=f"{plan['name']} — VPN",
-            payload=f"{cb.from_user.id}:{plan['id']}",
+            payload=f"{cb.from_user.id}:{plan['id']}:{mode}:{target_id or 0}",
         )
     except Exception as e:
         logger.error("CryptoPay invoice creation failed: %s", e)
-        await cb.answer("Ошибка создания инвойса. Попробуйте позже.", show_alert=True)
+        await cb.answer(t("usdt_invoice_error", lang), show_alert=True)
         return
 
     pay_url = invoice.get("pay_url", "")
     invoice_id = invoice.get("invoice_id")
 
     await cb.message.edit_text(
-        f"💎 <b>Оплата USDT</b>\n\n"
-        f"Сумма: <b>${plan['price_usdt']} USDT</b>\n\n"
-        f"👉 <a href='{pay_url}'>Перейти к оплате</a>\n\n"
-        f"После оплаты нажмите кнопку ✅",
-        parse_mode="HTML",
-        reply_markup=check_usdt_payment(invoice_id),
+        t("usdt_invoice_card", lang, amount=plan["price_usdt"], pay_url=pay_url),
+        reply_markup=check_usdt_payment(lang, str(invoice_id), mode, target_id),
         disable_web_page_preview=True,
     )
     await cb.answer()
 
 
 @router.callback_query(F.data.startswith("check_usdt:"))
-async def cb_check_usdt(cb: CallbackQuery):
-    invoice_id = int(cb.data.split(":")[1])
+async def cb_check_usdt(cb: CallbackQuery, lang: str):
+    _, invoice_id_s, mode, target_s = cb.data.split(":")
+    invoice_id = int(invoice_id_s)
+    target_id = int(target_s) if target_s != "0" else None
 
     try:
         paid = await crypto_pay.is_paid(invoice_id)
     except Exception as e:
         logger.error("CryptoPay check failed: %s", e)
-        await cb.answer("Ошибка проверки оплаты. Попробуйте позже.", show_alert=True)
+        await cb.answer(t("usdt_check_error", lang), show_alert=True)
         return
 
     if not paid:
-        await cb.answer("Оплата ещё не поступила. Попробуйте через минуту.", show_alert=True)
+        await cb.answer(t("usdt_not_paid_yet", lang), show_alert=True)
         return
 
-    # Get invoice details to extract amount and user
     try:
         invoice = await crypto_pay.get_invoice(invoice_id)
     except Exception:
@@ -286,7 +401,8 @@ async def cb_check_usdt(cb: CallbackQuery):
     plan_id = int(parts[1]) if len(parts) > 1 else None
     amount = float((invoice or {}).get("amount", settings.PLAN_PRICE_USDT))
 
-    await cb.message.edit_text("⏳ Оплата подтверждена! Создаём VPN-доступ...")
+    action_key = "payment_processing_renew" if mode == "renew" else "payment_processing_new"
+    await cb.message.edit_text(t("usdt_confirmed", lang, action=t(action_key, lang)))
 
     try:
         result = await billing_client.handle_usdt_payment(
@@ -297,78 +413,26 @@ async def cb_check_usdt(cb: CallbackQuery):
             invoice_id=str(invoice_id),
             amount=amount,
             plan_id=plan_id,
+            mode=mode,
+            target_subscription_id=target_id,
         )
     except Exception as e:
         logger.error("USDT payment processing failed: %s", e)
-        await cb.message.answer(
-            "❗ Ошибка при активации. Обратитесь в поддержку.",
-            reply_markup=back_to_menu(),
-        )
+        await cb.message.answer(t("usdt_activation_error", lang), reply_markup=back_to_menu(lang))
         return
 
-    config_url = result.get("config_url")
-    if config_url:
-        await _send_config(cb.bot, cb.from_user.id, config_url, result.get("expires_at"))
-    else:
-        await cb.message.answer(
-            "⏳ VPN создаётся. Конфиг придёт в течение нескольких минут.",
-            reply_markup=back_to_menu(),
-        )
+    await _deliver_result(cb.bot, cb.from_user.id, lang, result)
     await cb.answer()
 
 
 # ---------------------------------------------------------------------------
-# My subscription
+# Show QR on demand
 # ---------------------------------------------------------------------------
 
-@router.callback_query(F.data == "my_sub")
-async def cb_my_sub(cb: CallbackQuery):
-    try:
-        sub = await billing_client.get_subscription(cb.from_user.id)
-    except Exception:
-        sub = None
-
-    if not sub:
-        await cb.answer("Активная подписка не найдена.", show_alert=True)
-        return
-
-    status_emoji = {
-        "active": "✅",
-        "expired": "❌",
-        "pending_provisioning": "⏳",
-        "error": "⚠️",
-        "disabled": "🔒",
-    }.get(sub["status"], "❓")
-
-    expires = sub.get("expires_at", "")[:10] if sub.get("expires_at") else "неизвестно"
-
-    await cb.message.edit_text(
-        f"{status_emoji} <b>Ваша подписка</b>\n\n"
-        f"Тариф: <b>{sub.get('plan_name', '—')}</b>\n"
-        f"Статус: <b>{sub['status']}</b>\n"
-        f"Действует до: <b>{expires}</b>",
-        parse_mode="HTML",
-        reply_markup=main_menu(has_subscription=True),
-    )
-    await cb.answer()
-
-
-# ---------------------------------------------------------------------------
-# Get config (resend)
-# ---------------------------------------------------------------------------
-
-@router.callback_query(F.data == "get_config")
-async def cb_get_config(cb: CallbackQuery):
-    try:
-        sub = await billing_client.get_subscription(cb.from_user.id)
-    except Exception:
-        sub = None
-
-    if not sub or not sub.get("config_url"):
-        await cb.answer("Конфигурация недоступна. Попробуйте позже.", show_alert=True)
-        return
-
-    await _send_config(cb.bot, cb.from_user.id, sub["config_url"], sub.get("expires_at"))
+@router.callback_query(F.data.startswith("show_qr:"))
+async def cb_show_qr(cb: CallbackQuery, lang: str):
+    sub_id = int(cb.data.split(":")[1])
+    await _send_qr(cb.bot, cb.from_user.id, lang, cb.from_user.id, sub_id)
     await cb.answer()
 
 
@@ -377,11 +441,9 @@ async def cb_get_config(cb: CallbackQuery):
 # ---------------------------------------------------------------------------
 
 @router.callback_query(F.data == "support")
-async def cb_support(cb: CallbackQuery):
+async def cb_support(cb: CallbackQuery, lang: str):
     await cb.message.edit_text(
-        f"💬 <b>Поддержка</b>\n\n"
-        f"По любым вопросам: {settings.SUPPORT_LINK}",
-        parse_mode="HTML",
-        reply_markup=back_to_menu(),
+        t("support_text", lang, support_link=settings.SUPPORT_LINK),
+        reply_markup=back_to_menu(lang),
     )
     await cb.answer()

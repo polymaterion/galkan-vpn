@@ -25,10 +25,15 @@ class UserRepository:
     ) -> tuple[User, bool]:
         user = await self.get_by_telegram_id(telegram_id)
         if user:
-            # Update display info
-            user.username = username
-            user.first_name = first_name
-            user.last_name = last_name
+            # Update display info, but never blank out existing values with a
+            # None passed by a caller that doesn't have that info at hand
+            # (e.g. set_language() only has telegram_id).
+            if username is not None:
+                user.username = username
+            if first_name is not None:
+                user.first_name = first_name
+            if last_name is not None:
+                user.last_name = last_name
             return user, False
         user = User(
             telegram_id=telegram_id,
@@ -45,6 +50,12 @@ class UserRepository:
             select(User).offset(offset).limit(limit).order_by(User.id.desc())
         )
         return list(result.scalars().all())
+
+    async def set_language(self, telegram_id: int, language: str) -> User:
+        user, _ = await self.get_or_create(telegram_id=telegram_id)
+        user.language = language
+        await self.session.flush()
+        return user
 
     async def count(self) -> int:
         from sqlalchemy import func

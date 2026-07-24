@@ -1,6 +1,11 @@
 """
 Admin Telegram commands.
 Only accessible to users in ADMIN_IDS.
+
+Admin panel is intentionally Russian-only (t(key, "ru")) — it's for the bot
+owner, not end users, so it doesn't need the Turkmen translation. All its
+text still lives in bot/locales/ru.py under the "adm_" prefix, per the
+"keep every string in one file" requirement.
 """
 from __future__ import annotations
 
@@ -13,9 +18,12 @@ from aiogram.types import CallbackQuery, Message
 from bot.billing_client import billing_client
 from bot.config import settings
 from bot.keyboards.keyboards import admin_menu, back_to_menu
+from bot.locales import t
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+_L = "ru"  # admin panel language, fixed
 
 
 def _is_admin(user_id: int) -> bool:
@@ -26,35 +34,31 @@ def _is_admin(user_id: int) -> bool:
 @router.message(Command("admin"))
 async def cmd_admin(msg: Message):
     if not _is_admin(msg.from_user.id):
-        await msg.answer("⛔ Доступ запрещён.")
+        await msg.answer(t("adm_access_denied", _L))
         return
-    await msg.answer("🔧 <b>Панель администратора</b>", parse_mode="HTML", reply_markup=admin_menu())
+    await msg.answer(t("adm_panel_title", _L), reply_markup=admin_menu())
 
 
 # --- Users ---
 @router.callback_query(F.data == "adm_users")
 async def adm_users(cb: CallbackQuery):
     if not _is_admin(cb.from_user.id):
-        await cb.answer("⛔ Нет доступа.", show_alert=True)
+        await cb.answer(t("adm_no_access", _L), show_alert=True)
         return
     try:
         data = await billing_client.admin_list_users()
     except Exception as e:
-        await cb.answer(f"Ошибка: {e}", show_alert=True)
+        await cb.answer(t("adm_error", _L, error=e), show_alert=True)
         return
 
     total = data.get("total", 0)
     users = data.get("items", [])
-    lines = [f"👥 <b>Пользователи</b> (всего: {total})\n"]
+    lines = [t("adm_users_title", _L, total=total)]
     for u in users[:15]:
         uname = f"@{u['username']}" if u.get("username") else u.get("first_name", "—")
         lines.append(f"• <code>{u['telegram_id']}</code> {uname}")
 
-    await cb.message.edit_text(
-        "\n".join(lines),
-        parse_mode="HTML",
-        reply_markup=back_to_menu(),
-    )
+    await cb.message.edit_text("\n".join(lines), reply_markup=back_to_menu(_L))
     await cb.answer()
 
 
@@ -62,25 +66,21 @@ async def adm_users(cb: CallbackQuery):
 @router.callback_query(F.data == "adm_subs")
 async def adm_subs(cb: CallbackQuery):
     if not _is_admin(cb.from_user.id):
-        await cb.answer("⛔ Нет доступа.", show_alert=True)
+        await cb.answer(t("adm_no_access", _L), show_alert=True)
         return
     try:
         data = await billing_client.admin_list_subscriptions()
     except Exception as e:
-        await cb.answer(f"Ошибка: {e}", show_alert=True)
+        await cb.answer(t("adm_error", _L, error=e), show_alert=True)
         return
 
     subs = data.get("items", [])
-    lines = [f"📋 <b>Подписки</b>\n"]
+    lines = [t("adm_subs_title", _L)]
     for s in subs[:15]:
         exp = (s.get("expires_at") or "")[:10]
         lines.append(f"• #{s['id']} user={s['user_id']} [{s['status']}] до {exp}")
 
-    await cb.message.edit_text(
-        "\n".join(lines),
-        parse_mode="HTML",
-        reply_markup=back_to_menu(),
-    )
+    await cb.message.edit_text("\n".join(lines), reply_markup=back_to_menu(_L))
     await cb.answer()
 
 
@@ -88,26 +88,22 @@ async def adm_subs(cb: CallbackQuery):
 @router.callback_query(F.data == "adm_payments")
 async def adm_payments(cb: CallbackQuery):
     if not _is_admin(cb.from_user.id):
-        await cb.answer("⛔ Нет доступа.", show_alert=True)
+        await cb.answer(t("adm_no_access", _L), show_alert=True)
         return
     try:
         data = await billing_client.admin_list_payments()
     except Exception as e:
-        await cb.answer(f"Ошибка: {e}", show_alert=True)
+        await cb.answer(t("adm_error", _L, error=e), show_alert=True)
         return
 
     items = data.get("items", [])
-    lines = [f"💰 <b>Платежи</b>\n"]
+    lines = [t("adm_payments_title", _L)]
     for p in items[:15]:
         lines.append(
             f"• #{p['id']} {p['provider']} {p['amount']} {p['currency']} [{p['status']}]"
         )
 
-    await cb.message.edit_text(
-        "\n".join(lines),
-        parse_mode="HTML",
-        reply_markup=back_to_menu(),
-    )
+    await cb.message.edit_text("\n".join(lines), reply_markup=back_to_menu(_L))
     await cb.answer()
 
 
@@ -115,28 +111,27 @@ async def adm_payments(cb: CallbackQuery):
 @router.callback_query(F.data == "adm_servers")
 async def adm_servers(cb: CallbackQuery):
     if not _is_admin(cb.from_user.id):
-        await cb.answer("⛔ Нет доступа.", show_alert=True)
+        await cb.answer(t("adm_no_access", _L), show_alert=True)
         return
     try:
         data = await billing_client.admin_list_servers()
     except Exception as e:
-        await cb.answer(f"Ошибка: {e}", show_alert=True)
+        await cb.answer(t("adm_error", _L, error=e), show_alert=True)
         return
 
     items = data.get("items", [])
-    lines = [f"🖥 <b>Серверы VPN</b>\n"]
+    lines = [t("adm_servers_title", _L)]
     for s in items:
         load = s.get("load", {})
         cpu = load.get("cpu", "?")
         lines.append(
-            f"• #{s['id']} {s['name']} [{s['status']}] "
+            f"• #{s['id']} {s['name']} [{s['status']}] protocol={s.get('protocol', '?')} "
             f"{s['current_clients']}/{s['max_clients']} клиентов CPU={cpu}"
         )
 
     await cb.message.edit_text(
-        "\n".join(lines) or "Нет серверов",
-        parse_mode="HTML",
-        reply_markup=back_to_menu(),
+        "\n".join(lines) if items else t("adm_no_servers", _L),
+        reply_markup=back_to_menu(_L),
     )
     await cb.answer()
 
@@ -150,15 +145,15 @@ async def cmd_extend(msg: Message):
         return
     parts = msg.text.split()
     if len(parts) < 2:
-        await msg.answer("Usage: /extend <sub_id> [days=30]")
+        await msg.answer(t("adm_extend_usage", _L))
         return
     try:
         sub_id = int(parts[1])
         days = int(parts[2]) if len(parts) > 2 else 30
         await billing_client.admin_extend_subscription(sub_id, days)
-        await msg.answer(f"✅ Подписка #{sub_id} продлена на {days} дней.")
+        await msg.answer(t("adm_extend_success", _L, sub_id=sub_id, days=days))
     except Exception as e:
-        await msg.answer(f"❌ Ошибка: {e}")
+        await msg.answer(t("adm_generic_error", _L, error=e))
 
 
 @router.message(Command("disable_sub"))
@@ -168,14 +163,14 @@ async def cmd_disable_sub(msg: Message):
         return
     parts = msg.text.split()
     if len(parts) < 2:
-        await msg.answer("Usage: /disable_sub <sub_id>")
+        await msg.answer(t("adm_disable_usage", _L))
         return
     try:
         sub_id = int(parts[1])
         await billing_client.admin_disable_subscription(sub_id)
-        await msg.answer(f"✅ Подписка #{sub_id} отключена.")
+        await msg.answer(t("adm_disable_success", _L, sub_id=sub_id))
     except Exception as e:
-        await msg.answer(f"❌ Ошибка: {e}")
+        await msg.answer(t("adm_generic_error", _L, error=e))
 
 
 @router.message(Command("server_status"))
@@ -185,15 +180,15 @@ async def cmd_server_status(msg: Message):
         return
     parts = msg.text.split()
     if len(parts) < 3:
-        await msg.answer("Usage: /server_status <server_id> <active|disabled>")
+        await msg.answer(t("adm_server_status_usage", _L))
         return
     try:
         server_id = int(parts[1])
         status = parts[2]
         await billing_client.admin_set_server_status(server_id, status)
-        await msg.answer(f"✅ Сервер #{server_id} → {status}")
+        await msg.answer(t("adm_server_status_success", _L, server_id=server_id, status=status))
     except Exception as e:
-        await msg.answer(f"❌ Ошибка: {e}")
+        await msg.answer(t("adm_generic_error", _L, error=e))
 
 
 @router.message(Command("add_server"))
@@ -216,10 +211,7 @@ async def cmd_add_server(msg: Message):
         return
     parts = msg.text.split()
     if len(parts) < 4:
-        await msg.answer(
-            "Usage: /add_server <name> <base_url> <api_key> [region] [weight] [max_clients] [protocol]\n"
-            "Example: /add_server Server-DE http://1.2.3.4 <FASTIFY_API_KEY> DE 100 200 amneziawg2"
-        )
+        await msg.answer(t("adm_add_server_usage", _L))
         return
     try:
         name = parts[1]
@@ -239,8 +231,13 @@ async def cmd_add_server(msg: Message):
             protocol=protocol,
         )
         await msg.answer(
-            f"✅ Сервер #{result['id']} «{result['name']}» добавлен и активен "
-            f"(протокол: {result['protocol']})."
+            t(
+                "adm_add_server_success",
+                _L,
+                id=result["id"],
+                name=result["name"],
+                protocol=result["protocol"],
+            )
         )
     except Exception as e:
-        await msg.answer(f"❌ Ошибка: {e}")
+        await msg.answer(t("adm_generic_error", _L, error=e))

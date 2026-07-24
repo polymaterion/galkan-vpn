@@ -14,6 +14,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from bot.config import settings
 from bot.handlers.admin_handlers import router as admin_router
 from bot.handlers.main_handlers import router as main_router
+from bot.middlewares.language import LanguageMiddleware
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -28,6 +29,10 @@ async def main():
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher(storage=MemoryStorage())
+
+    lang_mw = LanguageMiddleware()
+    dp.message.middleware(lang_mw)
+    dp.callback_query.middleware(lang_mw)
 
     dp.include_router(main_router)
     dp.include_router(admin_router)

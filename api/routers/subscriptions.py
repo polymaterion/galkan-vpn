@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends
@@ -13,6 +14,8 @@ from billing.repositories.user_repo import UserRepository
 
 router = APIRouter(dependencies=[Depends(verify_internal_key)])
 
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+
 
 class SubscriptionOut(BaseModel):
     id: int
@@ -20,6 +23,7 @@ class SubscriptionOut(BaseModel):
     expires_at: Optional[str]
     starts_at: Optional[str]
     config_url: Optional[str]
+    connect_url: Optional[str]
     plan_name: Optional[str]
     plan_price_stars: Optional[int]
     plan_price_usdt: Optional[float]
@@ -37,6 +41,8 @@ class PlanOut(BaseModel):
 
 @router.get("/my", response_model=Optional[SubscriptionOut])
 async def get_my_subscription(telegram_id: int, session=Depends(get_db)):
+    """Latest device/subscription for this user. Kept for backward-compat
+    quick status checks — for the full list of devices use /devices."""
     user_repo = UserRepository(session)
     user = await user_repo.get_by_telegram_id(telegram_id)
     if not user:
@@ -46,6 +52,18 @@ async def get_my_subscription(telegram_id: int, session=Depends(get_db)):
     if not sub:
         return None
     return _sub_out(sub)
+
+
+@router.get("/devices", response_model=list[SubscriptionOut])
+async def get_my_devices(telegram_id: int, session=Depends(get_db)):
+    """Every device (subscription) this user has ever bought, newest first."""
+    user_repo = UserRepository(session)
+    user = await user_repo.get_by_telegram_id(telegram_id)
+    if not user:
+        return []
+    sub_repo = SubscriptionRepository(session)
+    subs = await sub_repo.get_all_for_user(user.id)
+    return [_sub_out(s) for s in subs]
 
 
 @router.get("/plan", response_model=Optional[PlanOut])
@@ -65,7 +83,11 @@ async def get_plan(session=Depends(get_db)):
 
 
 def _sub_out(sub) -> SubscriptionOut:
-    config_url = sub.vpn_client.config_url if sub.vpn_client else None
+    vc = sub.vpn_client
+    config_url = vc.config_url if vc else None
+    connect_url = None
+    if vc and vc.public_token and PUBLIC_BASE_URL:
+        connect_url = f"{PUBLIC_BASE_URL}/connect/{vc.public_token}"
     plan = sub.plan
     return SubscriptionOut(
         id=sub.id,
@@ -73,6 +95,7 @@ def _sub_out(sub) -> SubscriptionOut:
         expires_at=sub.expires_at.isoformat() if sub.expires_at else None,
         starts_at=sub.starts_at.isoformat() if sub.starts_at else None,
         config_url=config_url,
+        connect_url=connect_url,
         plan_name=plan.name if plan else None,
         plan_price_stars=plan.price_stars if plan else None,
         plan_price_usdt=float(plan.price_usdt) if plan else None,

@@ -100,6 +100,10 @@ class PaymentRepository:
         payment.status = PaymentStatus.paid
         payment.paid_at = datetime.now(timezone.utc)
 
+    async def link_subscription(self, payment: Payment, subscription_id: int) -> None:
+        payment.subscription_id = subscription_id
+        await self.session.flush()
+
     async def get_all(self, offset: int = 0, limit: int = 50) -> list[Payment]:
         result = await self.session.execute(
             select(Payment).offset(offset).limit(limit).order_by(Payment.id.desc())
@@ -118,8 +122,9 @@ class VpnClientRepository:
         amnezia_client_id: str,
         client_name: str,
         config_url: Optional[str],
-        protocol: str = "amneziawg",
+        protocol: str = "amneziawg2",
     ) -> VpnClient:
+        import secrets
         vc = VpnClient(
             subscription_id=subscription_id,
             server_id=server_id,
@@ -128,6 +133,7 @@ class VpnClientRepository:
             config_url=config_url,
             status=VpnClientStatus.active,
             protocol=protocol,
+            public_token=secrets.token_hex(24),  # 48 hex chars, unguessable
         )
         self.session.add(vc)
         await self.session.flush()
@@ -136,6 +142,12 @@ class VpnClientRepository:
     async def get_by_subscription(self, subscription_id: int) -> Optional[VpnClient]:
         result = await self.session.execute(
             select(VpnClient).where(VpnClient.subscription_id == subscription_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_public_token(self, token: str) -> Optional[VpnClient]:
+        result = await self.session.execute(
+            select(VpnClient).where(VpnClient.public_token == token)
         )
         return result.scalar_one_or_none()
 

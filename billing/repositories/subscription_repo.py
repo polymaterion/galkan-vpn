@@ -40,6 +40,16 @@ class SubscriptionRepository:
         )
         return result.unique().scalars().first()
 
+    async def get_all_for_user(self, user_id: int) -> list[Subscription]:
+        """All devices (subscriptions) belonging to a user, newest first."""
+        result = await self.session.execute(
+            select(Subscription)
+            .options(joinedload(Subscription.vpn_client), joinedload(Subscription.plan))
+            .where(Subscription.user_id == user_id)
+            .order_by(Subscription.id.desc())
+        )
+        return list(result.unique().scalars().all())
+
     async def get_expiring_before(self, before: datetime) -> list[Subscription]:
         """Fetch active subscriptions that expire before `before`."""
         result = await self.session.execute(

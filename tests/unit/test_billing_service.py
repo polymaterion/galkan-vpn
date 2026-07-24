@@ -169,11 +169,12 @@ async def test_duplicate_payment_is_idempotent(session, mock_amnezia_client):
 
 
 # ---------------------------------------------------------------------------
-# Test: Renewal extends expires_at
+# Test: default mode="new" always creates a brand-new device, even for the
+# same telegram_id paying twice — this is the hard "1 payment = 1 device" rule.
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_renewal_extends_expires_at(session, mock_amnezia_client):
+async def test_repeat_payment_creates_new_device_by_default(session, mock_amnezia_client):
     await _seed_plan(session)
     await _seed_server(session)
     await session.commit()
@@ -187,30 +188,147 @@ async def test_renewal_extends_expires_at(session, mock_amnezia_client):
         first_name="Bob",
         last_name=None,
         provider=PaymentProvider.stars,
-        external_id="charge_renewal_1",
+        external_id="charge_device_1",
         amount=100,
         currency="XTR",
     )
     await session.commit()
-    # Store as naive for comparison since SQLite returns naive
-    first_expiry = sub.expires_at
 
     sub2 = await svc.handle_payment(
         session,
-        telegram_id=444,
+        telegram_id=444,  # same user
         username=None,
         first_name="Bob",
         last_name=None,
         provider=PaymentProvider.stars,
-        external_id="charge_renewal_2",
+        external_id="charge_device_2",  # different payment
+        amount=100,
+        currency="XTR",
+        # mode defaults to "new"
+    )
+    await session.commit()
+
+    assert sub2.id != sub.id, "A second payment must provision a second device, not extend the first"
+    assert mock_amnezia_client.create_client.call_count == 2
+
+    user_repo = UserRepository(session)
+    user = await user_repo.get_by_telegram_id(444)
+    sub_repo = SubscriptionRepository(session)
+    all_devices = await sub_repo.get_all_for_user(user.id)
+    assert len(all_devices) == 2
+
+
+# ---------------------------------------------------------------------------
+# Test: mode="renew" extends the ONE specific device given by
+# target_subscription_id, and does not create a new one.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_explicit_renew_extends_specific_device(session, mock_amnezia_client):
+    await _seed_plan(session)
+    await _seed_server(session)
+    await session.commit()
+
+    svc = BillingService()
+
+    sub = await svc.handle_payment(
+        session,
+        telegram_id=445,
+        username=None,
+        first_name="Carol",
+        last_name=None,
+        provider=PaymentProvider.stars,
+        external_id="charge_renew_base",
+        amount=100,
+        currency="XTR",
+    )
+    await session.commit()
+    first_expiry = sub.expires_at
+
+    sub2 = await svc.handle_payment(
+        session,
+        telegram_id=445,
+        username=None,
+        first_name="Carol",
+        last_name=None,
+        provider=PaymentProvider.stars,
+        external_id="charge_renew_actual",
+        amount=100,
+        currency="XTR",
+        mode="renew",
+        target_subscription_id=sub.id,
+    )
+    await session.commit()
+
+    assert sub2.id == sub.id, "Explicit renew must extend the SAME device, not create a new one"
+    assert sub2.expires_at > first_expiry
+
+    user_repo = UserRepository(session)
+    user = await user_repo.get_by_telegram_id(445)
+    sub_repo = SubscriptionRepository(session)
+    all_devices = await sub_repo.get_all_for_user(user.id)
+    assert len(all_devices) == 1, "Renewing must not create a second device"
+
+
+@pytest.mark.asyncio
+async def test_renew_rejects_another_users_subscription(session, mock_amnezia_client):
+    await _seed_plan(session)
+    await _seed_server(session)
+    await session.commit()
+
+    svc = BillingService()
+
+    victim_sub = await svc.handle_payment(
+        session,
+        telegram_id=446,
+        username=None,
+        first_name="Victim",
+        last_name=None,
+        provider=PaymentProvider.stars,
+        external_id="charge_victim",
         amount=100,
         currency="XTR",
     )
     await session.commit()
 
-    assert sub2.id == sub.id
-    # Both naive or both aware — compare directly
-    assert sub2.expires_at > first_expiry
+    with pytest.raises(ValueError):
+        await svc.handle_payment(
+            session,
+            telegram_id=447,  # different user
+            username=None,
+            first_name="Attacker",
+            last_name=None,
+            provider=PaymentProvider.stars,
+            external_id="charge_attacker",
+            amount=100,
+            currency="XTR",
+            mode="renew",
+            target_subscription_id=victim_sub.id,
+        )
+
+
+@pytest.mark.asyncio
+async def test_renew_without_target_id_raises(session, mock_amnezia_client):
+    await _seed_plan(session)
+    await _seed_server(session)
+    await session.commit()
+
+    svc = BillingService()
+
+    with pytest.raises(ValueError):
+        await svc.handle_payment(
+            session,
+            telegram_id=448,
+            username=None,
+            first_name="NoTarget",
+            last_name=None,
+            provider=PaymentProvider.stars,
+            external_id="charge_no_target",
+            amount=100,
+            currency="XTR",
+            mode="renew",
+            target_subscription_id=None,
+        )
 
 
 # ---------------------------------------------------------------------------

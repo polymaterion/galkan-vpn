@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from api.routers import admin, payments, subscriptions
+from api.routers import admin, connect, payments, subscriptions, users
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
@@ -46,6 +46,10 @@ app.add_middleware(
 app.include_router(payments.router, prefix="/api/v1/payments", tags=["payments"])
 app.include_router(subscriptions.router, prefix="/api/v1/subscriptions", tags=["subscriptions"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
+app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
+# Public, unauthenticated — the landing page behind the "Open in Amnezia"
+# button. No /api/v1 prefix, no verify_internal_key. See connect.py docstring.
+app.include_router(connect.router, tags=["public"])
 
 
 @app.middleware("http")

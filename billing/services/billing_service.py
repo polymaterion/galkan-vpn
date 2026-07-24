@@ -79,13 +79,21 @@ class BillingService:
         amount: float,
         currency: str,
         plan_id: Optional[int] = None,
+        mode: str = "new",   # "new" = always provision a brand-new device;
+                             # "renew" = extend one specific existing device
+        target_subscription_id: Optional[int] = None,  # required if mode="renew"
     ) -> Subscription:
         """
         Idempotent payment handler.
         - Creates user if not exists.
         - Creates order + payment if not already processed.
         - Marks payment as paid.
-        - Triggers provisioning (or extension).
+        - mode="new" (default): ALWAYS provisions a brand-new VPN device/subscription.
+          One payment = one device, hard rule — even if the user already has other
+          active devices on the same Telegram account, this never extends them.
+        - mode="renew": extends the expiry of one specific existing subscription
+          (target_subscription_id), which must belong to this user. Use this for
+          "renew my existing device" rather than "buy me a new one".
         Returns the resulting Subscription.
         """
         evt_repo = ProcessedEventRepository(session)
@@ -94,10 +102,18 @@ class BillingService:
         # --- Idempotency check ---
         if await evt_repo.exists(event_key):
             logger.info("Duplicate event %s ignored", event_key)
-            sub_repo = SubscriptionRepository(session)
+            pay_repo = PaymentRepository(session)
+            payment = await pay_repo.get_by_external_id(provider, external_id)
+            if payment and payment.subscription_id:
+                sub_repo = SubscriptionRepository(session)
+                sub = await sub_repo.get_by_id(payment.subscription_id)
+                if sub:
+                    return sub
+            # Fallback heuristic (shouldn't normally be reached)
             user_repo = UserRepository(session)
             user = await user_repo.get_by_telegram_id(telegram_id)
             if user:
+                sub_repo = SubscriptionRepository(session)
                 sub = await sub_repo.get_latest_for_user(user.id)
                 if sub:
                     return sub
@@ -117,6 +133,16 @@ class BillingService:
         plan = await plan_repo.get_by_id(plan_id) if plan_id else await plan_repo.get_active_plan()
         if not plan:
             raise ValueError("No active plan found")
+
+        # --- Validate renew target BEFORE recording the payment ---
+        sub_repo = SubscriptionRepository(session)
+        target_sub: Optional[Subscription] = None
+        if mode == "renew":
+            if not target_subscription_id:
+                raise ValueError("target_subscription_id is required when mode='renew'")
+            target_sub = await sub_repo.get_by_id(target_subscription_id)
+            if not target_sub or target_sub.user_id != user.id:
+                raise ValueError("Subscription to renew not found or does not belong to this user")
 
         # --- Create order + payment ---
         order_repo = OrderRepository(session)
@@ -143,16 +169,16 @@ class BillingService:
             user_id=user.id,
             entity_type="payment",
             entity_id=payment.id,
-            details=json.dumps({"provider": provider.value, "external_id": external_id}),
+            details=json.dumps({"provider": provider.value, "external_id": external_id, "mode": mode}),
         )
 
-        # --- Create or extend subscription ---
-        sub = await self._create_or_extend_subscription(
-            session,
-            user_id=user.id,
-            plan=plan,
-        )
+        # --- Create a brand-new device, or renew one specific existing device ---
+        if mode == "renew":
+            sub = await self._renew_subscription(session, target_sub, plan)
+        else:
+            sub = await self._create_new_subscription(session, user_id=user.id, plan=plan)
 
+        await pay_repo.link_subscription(payment, sub.id)
         await session.flush()
 
         # --- Provision VPN (may fail; worker will retry) ---
@@ -164,47 +190,21 @@ class BillingService:
     # Subscription lifecycle
     # -----------------------------------------------------------------
 
-    async def _create_or_extend_subscription(
+    async def _create_new_subscription(
         self,
         session: AsyncSession,
         *,
         user_id: int,
         plan,
     ) -> Subscription:
+        """Always creates a brand-new subscription — i.e. a new device slot.
+        Never looks at or touches any existing subscription for this user."""
         sub_repo = SubscriptionRepository(session)
         audit = AuditRepository(session)
-
-        # Check for existing subscription (active, disabled, or error — can be extended)
-        existing = await sub_repo.get_latest_for_user(user_id)
 
         now = datetime.now(timezone.utc)
         duration = timedelta(days=plan.duration_days)
 
-        if existing and existing.status in (
-            SubscriptionStatus.active,
-            SubscriptionStatus.disabled,
-            SubscriptionStatus.error,
-            SubscriptionStatus.expired,
-            SubscriptionStatus.pending_provisioning,
-        ):
-            # Extend
-            existing.expires_at = _extended_expiry(existing.expires_at, duration)
-            existing.last_extended_at = now
-            if existing.status in (
-                SubscriptionStatus.disabled,
-                SubscriptionStatus.error,
-                SubscriptionStatus.expired,
-            ):
-                existing.status = SubscriptionStatus.pending_provisioning
-            await audit.log(
-                AuditAction.subscription_renewed,
-                user_id=user_id,
-                entity_type="subscription",
-                entity_id=existing.id,
-            )
-            return existing
-
-        # Create new
         sub = await sub_repo.create(
             user_id=user_id,
             plan_id=plan.id,
@@ -219,6 +219,34 @@ class BillingService:
             entity_id=sub.id,
         )
         return sub
+
+    async def _renew_subscription(
+        self,
+        session: AsyncSession,
+        existing: Subscription,
+        plan,
+    ) -> Subscription:
+        """Extends one specific, already-identified subscription. Same device, same key."""
+        audit = AuditRepository(session)
+
+        now = datetime.now(timezone.utc)
+        duration = timedelta(days=plan.duration_days)
+
+        existing.expires_at = _extended_expiry(existing.expires_at, duration)
+        existing.last_extended_at = now
+        if existing.status in (
+            SubscriptionStatus.disabled,
+            SubscriptionStatus.error,
+            SubscriptionStatus.expired,
+        ):
+            existing.status = SubscriptionStatus.pending_provisioning
+        await audit.log(
+            AuditAction.subscription_renewed,
+            user_id=existing.user_id,
+            entity_type="subscription",
+            entity_id=existing.id,
+        )
+        return existing
 
     async def _provision_subscription(
         self,
