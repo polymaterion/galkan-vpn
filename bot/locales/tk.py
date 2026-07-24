@@ -14,7 +14,7 @@ STRINGS: dict[str, str] = {
     "language_prompt": "🌐 Diliňizi saýlaň / Выберите язык:",
     "btn_lang_ru": "🇷🇺 Русский",
     "btn_lang_tk": "🇹🇲 Türkmençe",
-    "language_saved": "Dil saklandy: Türkmençe ✅",
+    "language_saved": "Dil üýtgedildi: Türkmençe ✅",
 
     "welcome": (
         "👋 <b>VPN Bot</b>-a hoş geldiňiz!\n\n"
@@ -22,11 +22,11 @@ STRINGS: dict[str, str] = {
         "Hereketi saýlaň:"
     ),
     "btn_my_devices": "📱 Meniň enjamlarym",
-    "btn_buy_new": "➕ Täze enjam goşmak — {price}⭐",
+    "btn_buy_new": "➕ Täze enjam goşmak",
     "btn_support": "💬 Goldaw",
     "btn_language": "🌐 Dil",
     "btn_back": "◀️ Yza",
-    "btn_back_to_menu": "◀️ Baş menýa",
+    "btn_back_to_menu": "◀️ Baş menýu",
 
     "devices_title": "📱 <b>Siziň enjamlaryňyz</b>\n\nHer enjam — aýratyn tölenen açar.",
     "devices_empty": (
@@ -57,7 +57,7 @@ STRINGS: dict[str, str] = {
         "⭐ Bahasy: <b>{price_stars} Telegram Stars</b>\n"
         "💵 ýa-da <b>${price_usdt} USDT</b>\n\n"
         "Bu aýratyn enjam: bir töleg = bir enjam üçin bir VPN açary. Başga bir "
-        "enjam üçin açar şol bir bahadan aýratyn töleg bilen resmileşdirilýär.\n\n"
+        "enjam üçin açar şol bir bahadan aýratyn töleg bilen açylýar.\n\n"
         "Töleg usulyny saýlaň:"
     ),
     "renew_card": (
@@ -65,7 +65,7 @@ STRINGS: dict[str, str] = {
         "⏱ Ýene {duration_days} gün\n"
         "⭐ Bahasy: <b>{price_stars} Telegram Stars</b>\n"
         "💵 ýa-da <b>${price_usdt} USDT</b>\n\n"
-        "Açar şol bir bolup galýar — diňe hereket möhleti uzaldylýar.\n\n"
+        "Açar şol bir bolup galýar — diňe möhleti uzaldylýar.\n\n"
         "Töleg usulyny saýlaň:"
     ),
     "btn_pay_stars": "⭐ Telegram Stars bilen tölemek",
