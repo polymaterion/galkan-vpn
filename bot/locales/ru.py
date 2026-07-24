@@ -12,12 +12,12 @@ STRINGS: dict[str, str] = {
 
     # --- Welcome / main menu ---
     "welcome": (
-        "👋 Добро пожаловать в <b>VPN Bot</b>!\n\n"
+        "👋 Добро пожаловать в <b>Galkan VPN Bot</b>!\n\n"
         "🛡 Безопасный VPN на основе AmneziaWG — обходит блокировки без следов.\n\n"
         "Выберите действие:"
     ),
     "btn_my_devices": "📱 Мои устройства",
-    "btn_buy_new": "➕ Подключить новое устройство — {price}⭐",
+    "btn_buy_new": "➕ Добавить устройство",
     "btn_support": "💬 Поддержка",
     "btn_language": "🌐 Язык",
     "btn_back": "◀️ Назад",
