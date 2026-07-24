@@ -17,7 +17,7 @@ STRINGS: dict[str, str] = {
     "language_saved": "Dil üýtgedildi: Türkmençe ✅",
 
     "welcome": (
-        "👋 <b>VPN Bot</b>-a hoş geldiňiz!\n\n"
+        "👋 <b>Galkan VPN Bot</b>-a hoş geldiňiz!\n\n"
         "🛡 AmneziaWG esasynda howpsuz VPN — päsgelçilikleri yzsyz aşýar.\n\n"
         "Hereketi saýlaň:"
     ),
@@ -65,7 +65,7 @@ STRINGS: dict[str, str] = {
         "⏱ Ýene {duration_days} gün\n"
         "⭐ Bahasy: <b>{price_stars} Telegram Stars</b>\n"
         "💵 ýa-da <b>${price_usdt} USDT</b>\n\n"
-        "Açar şol bir bolup galýar — diňe möhleti uzaldylýar.\n\n"
+        "Açar üýtgemeýär — diňe möhleti uzaldylýar.\n\n"
         "Töleg usulyny saýlaň:"
     ),
     "btn_pay_stars": "⭐ Telegram Stars bilen tölemek",
@@ -110,9 +110,9 @@ STRINGS: dict[str, str] = {
     "btn_i_paid": "✅ Men tölediм",
     "btn_cancel": "❌ Ýatyr",
     "usdt_check_error": "Tölegi barlamakda ýalňyşlyk. Soňra synanyşyň.",
-    "usdt_not_paid_yet": "Töleg entek gelip gowuşmady. Bir minutdan soň synanyşyň.",
+    "usdt_not_paid_yet": "Töleg entek geçmedi. Bir minutdan soň synanyşyň.",
     "usdt_confirmed": "⏳ Töleg tassyklandy! {action}",
-    "usdt_activation_error": "❗ Işjeňleşdirmekde ýalňyşlyk. Goldawa ýüz tutuň.",
+    "usdt_activation_error": "❗ Ýalňyşlyk. Goldawa ýüz tutuň.",
 
     "support_text": "💬 <b>Goldaw</b>\n\nIslendik sorag boýunça: {support_link}",
 
