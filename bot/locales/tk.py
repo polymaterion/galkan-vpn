@@ -14,19 +14,19 @@ STRINGS: dict[str, str] = {
     "language_prompt": "🌐 Diliňizi saýlaň / Выберите язык:",
     "btn_lang_ru": "🇷🇺 Русский",
     "btn_lang_tk": "🇹🇲 Türkmençe",
-    "language_saved": "Dil üýtgedildi: Türkmençe ✅",
+    "language_saved": "Dil saklandy: Türkmençe ✅",
 
     "welcome": (
-        "👋 <b>Galkan VPN Bot</b>-a hoş geldiňiz!\n\n"
+        "👋 <b>VPN Bot</b>-a hoş geldiňiz!\n\n"
         "🛡 AmneziaWG esasynda howpsuz VPN — päsgelçilikleri yzsyz aşýar.\n\n"
         "Hereketi saýlaň:"
     ),
     "btn_my_devices": "📱 Meniň enjamlarym",
-    "btn_buy_new": "➕ Täze enjam goşmak",
+    "btn_buy_new": "➕ Täze enjam goşmak — {price}⭐",
     "btn_support": "💬 Goldaw",
     "btn_language": "🌐 Dil",
     "btn_back": "◀️ Yza",
-    "btn_back_to_menu": "◀️ Baş menýu",
+    "btn_back_to_menu": "◀️ Baş menýa",
 
     "devices_title": "📱 <b>Siziň enjamlaryňyz</b>\n\nHer enjam — aýratyn tölenen açar.",
     "devices_empty": (
@@ -57,7 +57,7 @@ STRINGS: dict[str, str] = {
         "⭐ Bahasy: <b>{price_stars} Telegram Stars</b>\n"
         "💵 ýa-da <b>${price_usdt} USDT</b>\n\n"
         "Bu aýratyn enjam: bir töleg = bir enjam üçin bir VPN açary. Başga bir "
-        "enjam üçin açar şol bir bahadan aýratyn töleg bilen açylýar.\n\n"
+        "enjam üçin açar şol bir bahadan aýratyn töleg bilen resmileşdirilýär.\n\n"
         "Töleg usulyny saýlaň:"
     ),
     "renew_card": (
@@ -65,7 +65,7 @@ STRINGS: dict[str, str] = {
         "⏱ Ýene {duration_days} gün\n"
         "⭐ Bahasy: <b>{price_stars} Telegram Stars</b>\n"
         "💵 ýa-da <b>${price_usdt} USDT</b>\n\n"
-        "Açar üýtgemeýär — diňe möhleti uzaldylýar.\n\n"
+        "Açar şol bir bolup galýar — diňe hereket möhleti uzaldylýar.\n\n"
         "Töleg usulyny saýlaň:"
     ),
     "btn_pay_stars": "⭐ Telegram Stars bilen tölemek",
@@ -107,14 +107,42 @@ STRINGS: dict[str, str] = {
         "👉 <a href='{pay_url}'>Tölege geçmek</a>\n\n"
         "Töleg edenizden soň ✅ düwmesine basyň"
     ),
-    "btn_i_paid": "✅ Men tölediм",
+    "btn_i_paid": "✅ Men töledim",
     "btn_cancel": "❌ Ýatyr",
     "usdt_check_error": "Tölegi barlamakda ýalňyşlyk. Soňra synanyşyň.",
-    "usdt_not_paid_yet": "Töleg entek geçmedi. Bir minutdan soň synanyşyň.",
+    "usdt_not_paid_yet": "Töleg entek gelip gowuşmady. Bir minutdan soň synanyşyň.",
     "usdt_confirmed": "⏳ Töleg tassyklandy! {action}",
-    "usdt_activation_error": "❗ Ýalňyşlyk. Goldawa ýüz tutuň.",
+    "usdt_activation_error": "❗ Işjeňleşdirmekde ýalňyşlyk. Goldawa ýüz tutuň.",
 
     "support_text": "💬 <b>Goldaw</b>\n\nIslendik sorag boýunça: {support_link}",
 
     "no_active_device": "Işjeň enjam tapylmady.",
+
+    # --- Admin panel ---
+    "adm_access_denied": "⛔ Girmek gadagan.",
+    "adm_no_access": "⛔ Elýeterlilik ýok.",
+    "adm_panel_title": "🔧 <b>Administrator paneli</b>",
+    "adm_btn_users": "👥 Ulanyjylar",
+    "adm_btn_subs": "📋 Abunalar",
+    "adm_btn_payments": "💰 Tölegler",
+    "adm_btn_servers": "🖥 Serwerler",
+    "adm_btn_back": "◀️ Administrator paneline",
+    "adm_users_title": "👥 <b>Ulanyjylar</b> (jemi: {total})\n",
+    "adm_subs_title": "📋 <b>Abunalar</b>\n",
+    "adm_payments_title": "💰 <b>Tölegler</b>\n",
+    "adm_servers_title": "🖥 <b>VPN serwerleri</b>\n",
+    "adm_no_servers": "Serwer ýok",
+    "adm_error": "Ýalňyşlyk: {error}",
+    "adm_extend_usage": "Usage: /extend <sub_id> [days=30]",
+    "adm_extend_success": "✅ #{sub_id} abunasy {days} güne uzaldyldy.",
+    "adm_disable_usage": "Usage: /disable_sub <sub_id>",
+    "adm_disable_success": "✅ #{sub_id} abunasy öçürildi.",
+    "adm_server_status_usage": "Usage: /server_status <server_id> <active|disabled>",
+    "adm_server_status_success": "✅ #{server_id} serwer → {status}",
+    "adm_add_server_usage": (
+        "Usage: /add_server <name> <base_url> <api_key> [region] [weight] [max_clients] [protocol]\n"
+        "Example: /add_server Server-DE http://1.2.3.4 <FASTIFY_API_KEY> DE 100 200 amneziawg2"
+    ),
+    "adm_add_server_success": "✅ #{id} «{name}» serweri goşuldy we işjeň (protokol: {protocol}).",
+    "adm_generic_error": "❌ Ýalňyşlyk: {error}",
 }

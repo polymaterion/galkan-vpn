@@ -119,10 +119,20 @@ def config_ready_keyboard(
     return builder.as_markup()
 
 
-def admin_menu() -> InlineKeyboardMarkup:
+def admin_menu(lang: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="👥 Пользователи", callback_data="adm_users"))
-    builder.row(InlineKeyboardButton(text="📋 Подписки", callback_data="adm_subs"))
-    builder.row(InlineKeyboardButton(text="💰 Платежи", callback_data="adm_payments"))
-    builder.row(InlineKeyboardButton(text="🖥 Серверы", callback_data="adm_servers"))
+    builder.row(InlineKeyboardButton(text=t("adm_btn_users", lang), callback_data="adm_users"))
+    builder.row(InlineKeyboardButton(text=t("adm_btn_subs", lang), callback_data="adm_subs"))
+    builder.row(InlineKeyboardButton(text=t("adm_btn_payments", lang), callback_data="adm_payments"))
+    builder.row(InlineKeyboardButton(text=t("adm_btn_servers", lang), callback_data="adm_servers"))
+    return builder.as_markup()
+
+
+def admin_back_keyboard(lang: str) -> InlineKeyboardMarkup:
+    """Back button for admin sub-screens. Deliberately a SEPARATE
+    callback ("adm_menu") from the customer-facing back_to_menu()
+    ("start") — otherwise an admin browsing e.g. Users and hitting "back"
+    would land in the customer purchase flow instead of the admin panel."""
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text=t("adm_btn_back", lang), callback_data="adm_menu"))
     return builder.as_markup()

@@ -12,12 +12,12 @@ STRINGS: dict[str, str] = {
 
     # --- Welcome / main menu ---
     "welcome": (
-        "👋 Добро пожаловать в <b>Galkan VPN Bot</b>!\n\n"
+        "👋 Добро пожаловать в <b>VPN Bot</b>!\n\n"
         "🛡 Безопасный VPN на основе AmneziaWG — обходит блокировки без следов.\n\n"
         "Выберите действие:"
     ),
     "btn_my_devices": "📱 Мои устройства",
-    "btn_buy_new": "➕ Добавить устройство",
+    "btn_buy_new": "➕ Подключить новое устройство — {price}⭐",
     "btn_support": "💬 Поддержка",
     "btn_language": "🌐 Язык",
     "btn_back": "◀️ Назад",
@@ -122,10 +122,16 @@ STRINGS: dict[str, str] = {
     # --- Misc errors ---
     "no_active_device": "Устройство не найдено.",
 
-    # --- Admin panel (Russian-only by design — this is for the bot owner) ---
+    # --- Admin panel (respects the admin's own selected language, same as
+    # the rest of the bot — see admin_handlers.py) ---
     "adm_access_denied": "⛔ Доступ запрещён.",
     "adm_no_access": "⛔ Нет доступа.",
     "adm_panel_title": "🔧 <b>Панель администратора</b>",
+    "adm_btn_users": "👥 Пользователи",
+    "adm_btn_subs": "📋 Подписки",
+    "adm_btn_payments": "💰 Платежи",
+    "adm_btn_servers": "🖥 Серверы",
+    "adm_btn_back": "◀️ В панель администратора",
     "adm_users_title": "👥 <b>Пользователи</b> (всего: {total})\n",
     "adm_subs_title": "📋 <b>Подписки</b>\n",
     "adm_payments_title": "💰 <b>Платежи</b>\n",
