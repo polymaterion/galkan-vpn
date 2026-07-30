@@ -68,11 +68,22 @@ async def seed():
 
     async with async_session() as session:
         # --- Plan ---
+        # NOTE on name/description: these two fields are NOT shown to
+        # customers anymore. The bot builds the customer-facing plan name
+        # and description entirely from bot/locales/{ru,tk}.py
+        # ("plan_name_text" / "plan_description_text", parameterized by
+        # duration_days) so it's always in the user's chosen language — see
+        # bot/handlers/main_handlers.py (cb_buy_new, cb_pay_stars,
+        # cb_pay_usdt). Only duration_days/price_stars/price_usdt from this
+        # row are actually read for display. name/description below exist
+        # only as an internal/admin-facing label (e.g. if you inspect the
+        # DB directly) — kept language-neutral on purpose so nobody mistakes
+        # them for the real (translated) customer-facing text again.
         result = await session.execute(select(Plan).limit(1))
         if not result.scalar_one_or_none():
             plan = Plan(
-                name="VPN — 30 дней",
-                description="Безлимитный VPN на 30 дней. AmneziaWG протокол.",
+                name="Default VPN plan (internal label — not shown to users)",
+                description="See bot/locales/*.py for the real customer-facing text.",
                 duration_days=30,
                 price_stars=int(os.getenv("PLAN_PRICE_STARS", "100")),
                 price_usdt=float(os.getenv("PLAN_PRICE_USDT", "3.00")),
