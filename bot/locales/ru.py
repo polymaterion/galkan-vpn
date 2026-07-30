@@ -47,6 +47,8 @@ STRINGS: dict[str, str] = {
     "unknown_expiry": "неизвестно",
 
     # --- Buy flow ---
+    "plan_name_text": "VPN — {duration_days} дней",
+    "plan_description_text": "Безлимитный VPN на {duration_days} дней. Протокол AmneziaWG.",
     "plan_card": (
         "💎 <b>{name}</b>\n\n"
         "{description}\n\n"

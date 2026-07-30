@@ -32,18 +32,24 @@ def main_menu(lang: str, price_stars: int) -> InlineKeyboardMarkup:
 
 
 def devices_keyboard(
-    lang: str, devices: list[dict], price_stars: int
+    lang: str, devices: list[dict], price_stars: int, use_direct_link: bool = True
 ) -> InlineKeyboardMarkup:
     """One row of buttons per device (connect / QR / renew), plus a buy-new
-    and back row at the bottom."""
+    and back row at the bottom.
+
+    use_direct_link=True puts the raw vpn:// config straight into the
+    "Подключить" button's url. Telegram officially only guarantees http(s)/
+    tg:// urls for buttons, so this can in principle be rejected by some
+    clients/versions — if that happens, call again with
+    use_direct_link=False to drop the url buttons (QR/renew still work)."""
     builder = InlineKeyboardBuilder()
     for i, d in enumerate(devices, start=1):
         row: list[InlineKeyboardButton] = []
-        connect_url = d.get("connect_url")
-        if connect_url and d.get("status") == "active":
+        deep_link = d.get("config_url")
+        if use_direct_link and deep_link and d.get("status") == "active":
             row.append(
                 InlineKeyboardButton(
-                    text=t("btn_device_connect", lang, n=i), url=connect_url
+                    text=t("btn_device_connect", lang, n=i), url=deep_link
                 )
             )
         row.append(
@@ -103,12 +109,15 @@ def check_usdt_payment(
 
 
 def config_ready_keyboard(
-    lang: str, connect_url: Optional[str], subscription_id: int
+    lang: str, deep_link_url: Optional[str], subscription_id: int
 ) -> InlineKeyboardMarkup:
+    """deep_link_url is the raw vpn://... config — pass None to omit the
+    connect button entirely (used as the fallback if Telegram rejects the
+    custom-scheme url; see main_handlers._deliver_result)."""
     builder = InlineKeyboardBuilder()
-    if connect_url:
+    if deep_link_url:
         builder.row(
-            InlineKeyboardButton(text=t("btn_connect_amnezia", lang), url=connect_url)
+            InlineKeyboardButton(text=t("btn_connect_amnezia", lang), url=deep_link_url)
         )
     builder.row(
         InlineKeyboardButton(

@@ -50,6 +50,8 @@ STRINGS: dict[str, str] = {
     "status_pending_payment": "💳 Töleg garaşylýar",
     "unknown_expiry": "näbelli",
 
+    "plan_name_text": "VPN — {duration_days} gün",
+    "plan_description_text": "AmneziaWG protokoly esasynda {duration_days} günlük çäksiz VPN.",
     "plan_card": (
         "💎 <b>{name}</b>\n\n"
         "{description}\n\n"

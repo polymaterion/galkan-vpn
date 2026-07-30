@@ -13,6 +13,7 @@ from io import BytesIO
 from typing import Optional
 
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.types import (
     BufferedInputFile,
@@ -72,11 +73,18 @@ STATUS_EMOJI = {
 
 
 async def _deliver_result(bot: Bot, chat_id: int, lang: str, result: dict) -> None:
-    """After a successful payment: show the 'device ready' card with
-    connect/QR buttons, or a 'still provisioning' message if the VPN key
-    isn't ready yet (worker will retry; user checks 'Мои устройства' later)."""
+    """After a successful payment: show the 'device ready' card with a
+    connect button pointing DIRECTLY at the vpn:// config (no intermediate
+    landing page), plus a QR button. Or a 'still provisioning' message if
+    the VPN key isn't ready yet (worker will retry; user checks 'Мои
+    устройства' later).
+
+    Telegram only officially guarantees http(s)/tg:// urls for inline
+    buttons — a vpn:// button can in principle be rejected outright when
+    sending. If that happens we retry once without the url button so the
+    user still gets their config (via text + QR), rather than losing the
+    message entirely."""
     config_url = result.get("config_url")
-    connect_url = result.get("connect_url")
     sub_id = result["subscription_id"]
     expires = (result.get("expires_at") or "")[:10] or t("unknown_expiry", lang)
 
@@ -89,14 +97,18 @@ async def _deliver_result(bot: Bot, chat_id: int, lang: str, result: dict) -> No
         return
 
     text = t("config_ready", lang, expires=expires)
-    if not connect_url:
-        # PUBLIC_BASE_URL isn't configured on the server — fall back to a
-        # plain text link the user can paste into Amnezia manually.
-        text += "\n\n" + t("config_link_fallback", lang, config_url=config_url)
-
-    await bot.send_message(
-        chat_id, text, reply_markup=config_ready_keyboard(lang, connect_url, sub_id)
-    )
+    try:
+        await bot.send_message(
+            chat_id, text, reply_markup=config_ready_keyboard(lang, config_url, sub_id)
+        )
+    except TelegramBadRequest as e:
+        logger.warning(
+            "Telegram rejected the vpn:// connect button (%s) — falling back to text link", e
+        )
+        text_fallback = text + "\n\n" + t("config_link_fallback", lang, config_url=config_url)
+        await bot.send_message(
+            chat_id, text_fallback, reply_markup=config_ready_keyboard(lang, None, sub_id)
+        )
 
 
 async def _send_qr(bot: Bot, chat_id: int, lang: str, telegram_id: int, sub_id: int) -> None:
@@ -192,10 +204,18 @@ async def cb_devices(cb: CallbackQuery, lang: str):
         emoji = STATUS_EMOJI.get(d["status"], "❓")
         lines.append(t("device_line", lang, emoji=emoji, n=i, status=status_text, expires=expires))
 
-    await cb.message.edit_text(
-        "\n".join(lines),
-        reply_markup=devices_keyboard(lang, devices, price),
-    )
+    text = "\n".join(lines)
+    try:
+        await cb.message.edit_text(text, reply_markup=devices_keyboard(lang, devices, price))
+    except TelegramBadRequest as e:
+        logger.warning(
+            "Telegram rejected a vpn:// connect button in devices list (%s) — "
+            "falling back to QR-only buttons",
+            e,
+        )
+        await cb.message.edit_text(
+            text, reply_markup=devices_keyboard(lang, devices, price, use_direct_link=False)
+        )
     await cb.answer()
 
 
@@ -218,8 +238,8 @@ async def cb_buy_new(cb: CallbackQuery, lang: str):
     text = t(
         "plan_card",
         lang,
-        name=plan["name"],
-        description=plan.get("description") or "",
+        name=t("plan_name_text", lang, duration_days=plan["duration_days"]),
+        description=t("plan_description_text", lang, duration_days=plan["duration_days"]),
         duration_days=plan["duration_days"],
         price_stars=plan["price_stars"],
         price_usdt=plan["price_usdt"],
@@ -282,13 +302,15 @@ async def cb_pay_stars(cb: CallbackQuery, bot: Bot, lang: str):
         return
 
     payload = f"stars:{mode}:{target_id}:{plan['id']}"
+    plan_name = t("plan_name_text", lang, duration_days=plan["duration_days"])
+    plan_description = t("plan_description_text", lang, duration_days=plan["duration_days"])
     await bot.send_invoice(
         chat_id=cb.from_user.id,
-        title=plan["name"],
-        description=plan.get("description") or "VPN",
+        title=plan_name,
+        description=plan_description,
         payload=payload,
         currency="XTR",
-        prices=[LabeledPrice(label=plan["name"], amount=plan["price_stars"])],
+        prices=[LabeledPrice(label=plan_name, amount=plan["price_stars"])],
         provider_token="",  # Empty for Stars
     )
     await cb.answer()
@@ -355,7 +377,7 @@ async def cb_pay_usdt(cb: CallbackQuery, lang: str):
         invoice = await crypto_pay.create_invoice(
             amount=float(plan["price_usdt"]),
             asset="USDT",
-            description=f"{plan['name']} — VPN",
+            description=t("plan_name_text", lang, duration_days=plan["duration_days"]),
             payload=f"{cb.from_user.id}:{plan['id']}:{mode}:{target_id or 0}",
         )
     except Exception as e:
