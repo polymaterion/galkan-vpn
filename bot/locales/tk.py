@@ -97,15 +97,16 @@ STRINGS: dict[str, str] = {
     "config_ready": (
         "✅ <b>Enjam taýyn!</b>\n"
         "⏳ Şu senä çenli hereket edýär: <b>{expires}</b>\n\n"
-        "Birikdirmek üçin düwmä basyň — konfigurasiýa Amnezia programmasynda "
-        "awtomatiki sazlanar."
+        "Açar aşakdaky düwme arkaly islendik wagt elýeterli."
     ),
-    "btn_connect_amnezia": "🔑 Amnezia-da birikdirmek",
+    "btn_connect_amnezia": "🔑 Açary görkezmek",
     "btn_show_qr": "📱 QR-kody görkezmek",
     "qr_caption": "📷 Bu QR-kody AmneziaVPN programmasynda skanirläň",
     "qr_unavailable": "Konfigurasiýa elýeterli däl. Soňra synanyşyň.",
-    "config_link_fallback": (
-        "🔗 Amnezia-a el bilen goşmak üçin salgy:\n<code>{config_url}</code>"
+    "config_key_message": (
+        "🔑 Birikdirmek üçin açaryňyz (nusgalamak üçin basyň):\n"
+        "<code>{config_url}</code>\n\n"
+        "AmneziaVPN programmasynda «Konfigurasiýa goşmak» → «Buferden» arkaly ýerleşdiriň."
     ),
 
     "usdt_unavailable": "USDT tölegi wagtlaýyn elýeterli däl. Telegram Stars-y synanyşyň.",

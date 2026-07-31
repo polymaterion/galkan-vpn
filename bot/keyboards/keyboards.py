@@ -41,7 +41,7 @@ def back_keyboard(lang: str) -> InlineKeyboardMarkup:
 
 
 def devices_keyboard(
-    lang: str, devices: list[dict], price_stars: int, use_direct_link: bool = True
+    lang: str, devices: list[dict], price_stars: int
 ) -> InlineKeyboardMarkup:
     """List screen. Each device opens its own card screen."""
     builder = InlineKeyboardBuilder()
@@ -63,17 +63,19 @@ def device_card_keyboard(
     device: dict,
     number: int,
     price_stars: int,
-    use_direct_link: bool = True,
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    deep_link = device.get("config_url")
-    if use_direct_link and deep_link and device.get("status") == "active":
-        builder.row(InlineKeyboardButton(text=t("btn_device_connect", lang, n=number), url=deep_link))
-    builder.row(
-        InlineKeyboardButton(
-            text=t("btn_device_qr", lang, n=number), callback_data=f"show_qr:{device['id']}"
+    if device.get("config_url") and device.get("status") == "active":
+        builder.row(
+            InlineKeyboardButton(
+                text=t("btn_device_connect", lang, n=number), callback_data=f"show_key:{device['id']}"
+            )
         )
-    )
+        builder.row(
+            InlineKeyboardButton(
+                text=t("btn_device_qr", lang, n=number), callback_data=f"show_qr:{device['id']}"
+            )
+        )
     builder.row(
         InlineKeyboardButton(
             text=t("btn_device_renew", lang, n=number, price=price_stars),
@@ -109,13 +111,15 @@ def check_usdt_payment(lang: str, invoice_id: str, mode: str, target_id: Optiona
     return builder.as_markup()
 
 
-def config_ready_keyboard(lang: str, deep_link_url: Optional[str], subscription_id: int) -> InlineKeyboardMarkup:
+def config_ready_keyboard(lang: str, has_config: bool, subscription_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    if deep_link_url:
-        builder.row(InlineKeyboardButton(text=t("btn_connect_amnezia", lang), url=deep_link_url))
-    builder.row(
-        InlineKeyboardButton(text=t("btn_show_qr", lang), callback_data=f"show_qr:{subscription_id}")
-    )
+    if has_config:
+        builder.row(
+            InlineKeyboardButton(text=t("btn_connect_amnezia", lang), callback_data=f"show_key:{subscription_id}")
+        )
+        builder.row(
+            InlineKeyboardButton(text=t("btn_show_qr", lang), callback_data=f"show_qr:{subscription_id}")
+        )
     builder.row(InlineKeyboardButton(text=t("btn_back", lang), callback_data="nav:back"))
     return builder.as_markup()
 

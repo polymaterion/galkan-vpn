@@ -145,7 +145,7 @@ async def _devices_view(
 
 
 async def _device_view(
-    telegram_id: int, lang: str, subscription_id: int, use_direct_link: bool = True
+    telegram_id: int, lang: str, subscription_id: int
 ) -> tuple[str, InlineKeyboardMarkup | None]:
     try:
         devices = await billing_client.get_devices(telegram_id)
@@ -169,9 +169,7 @@ async def _device_view(
         status=status,
         expires=expires,
     )
-    return text, device_card_keyboard(
-        lang, device, device_number, await _get_price_stars(), use_direct_link=use_direct_link
-    )
+    return text, device_card_keyboard(lang, device, device_number, await _get_price_stars())
 
 
 async def _plan_view(
@@ -231,23 +229,15 @@ async def _render_entry(
         text, markup = t("language_prompt", lang), language_picker(lang, include_back=True)
     elif screen == "config_ready":
         text = t("config_ready", lang, expires=params.get("expires") or t("unknown_expiry", lang))
-        markup = config_ready_keyboard(lang, params.get("config_url"), int(params["subscription_id"]))
+        markup = config_ready_keyboard(
+            lang, bool(params.get("config_url")), int(params["subscription_id"])
+        )
     elif screen == "provisioning":
         text, markup = t("provisioning_pending", lang), back_keyboard(lang)
     else:
         text, markup = await _main_view(lang)
         await navigation.reset(state)
-    try:
-        await _edit_view(message, state, text, markup, disable_web_page_preview=True)
-    except TelegramBadRequest as exc:
-        # Some Telegram clients reject custom vpn:// URLs in inline buttons.
-        # Keep the screen usable by rendering the same card with QR instead.
-        if screen != "device_card" or "url" not in str(exc).lower():
-            raise
-        text, markup = await _device_view(
-            message.chat.id, lang, int(params["subscription_id"]), use_direct_link=False
-        )
-        await _edit_view(message, state, text, markup, disable_web_page_preview=True)
+    await _edit_view(message, state, text, markup, disable_web_page_preview=True)
 
 
 async def _deliver_result(
@@ -273,35 +263,28 @@ async def _deliver_result(
             expires=expires,
         )
         text = t("config_ready", lang, expires=expires)
-        markup = config_ready_keyboard(lang, config_url, sub_id)
+        markup = config_ready_keyboard(lang, True, sub_id)
 
     edited = await _edit_ui_message(bot, chat_id, state, text, markup, disable_web_page_preview=True)
-    if config_url and not edited:
-        # A custom scheme may be rejected by Telegram. The QR action remains
-        # available even when the direct Amnezia button cannot be rendered.
-        text += "\n\n" + t("config_link_fallback", lang, config_url=config_url)
-        edited = await _edit_ui_message(
-            bot,
-            chat_id,
-            state,
-            text,
-            config_ready_keyboard(lang, None, sub_id),
-            disable_web_page_preview=True,
-        )
     if edited or fallback_message is None:
         return
     await fallback_message.answer(text, reply_markup=markup, disable_web_page_preview=True)
 
 
-async def _send_qr(bot: Bot, chat_id: int, lang: str, telegram_id: int, sub_id: int) -> None:
+async def _get_device_config_url(telegram_id: int, sub_id: int) -> str | None:
     try:
         devices = await billing_client.get_devices(telegram_id)
         device = next((item for item in devices if item["id"] == sub_id), None)
-        config_url = device.get("config_url") if device else None
+        return device.get("config_url") if device else None
     except Exception as exc:
-        logger.warning("Failed to fetch device for QR: %s", exc)
-        config_url = None
+        logger.warning("Failed to fetch device %s: %s", sub_id, exc)
+        return None
+
+
+async def _send_qr(bot: Bot, chat_id: int, lang: str, telegram_id: int, sub_id: int) -> None:
+    config_url = await _get_device_config_url(telegram_id, sub_id)
     if not config_url:
+        await bot.send_message(chat_id, t("qr_unavailable", lang))
         return
     try:
         await bot.send_photo(
@@ -311,6 +294,15 @@ async def _send_qr(bot: Bot, chat_id: int, lang: str, telegram_id: int, sub_id: 
         )
     except Exception as exc:
         logger.warning("QR generation failed: %s", exc)
+        await bot.send_message(chat_id, t("qr_unavailable", lang))
+
+
+async def _send_key(bot: Bot, chat_id: int, lang: str, telegram_id: int, sub_id: int) -> None:
+    config_url = await _get_device_config_url(telegram_id, sub_id)
+    if not config_url:
+        await bot.send_message(chat_id, t("qr_unavailable", lang))
+        return
+    await bot.send_message(chat_id, t("config_key_message", lang, config_url=config_url))
 
 
 # --- Root and stack navigation ------------------------------------------------
@@ -549,4 +541,10 @@ async def cb_check_usdt(cb: CallbackQuery, state: FSMContext, lang: str):
 @router.callback_query(F.data.startswith("show_qr:"))
 async def cb_show_qr(cb: CallbackQuery, lang: str):
     await _send_qr(cb.bot, cb.from_user.id, lang, cb.from_user.id, int(cb.data.split(":")[1]))
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("show_key:"))
+async def cb_show_key(cb: CallbackQuery, lang: str):
+    await _send_key(cb.bot, cb.from_user.id, lang, cb.from_user.id, int(cb.data.split(":")[1]))
     await cb.answer()
