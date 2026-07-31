@@ -9,12 +9,14 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.locales import t
 
 
-def language_picker(lang: str = "ru") -> InlineKeyboardMarkup:
+def language_picker(lang: str = "ru", include_back: bool = False) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text=t("btn_lang_ru", lang), callback_data="lang:ru"),
         InlineKeyboardButton(text=t("btn_lang_tk", lang), callback_data="lang:tk"),
     )
+    if include_back:
+        builder.row(InlineKeyboardButton(text=t("btn_back", lang), callback_data="nav:back"))
     return builder.as_markup()
 
 
