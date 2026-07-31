@@ -7,6 +7,7 @@ images, both of which Telegram requires to be separate message types.
 """
 from __future__ import annotations
 
+import html
 import logging
 from typing import Any
 
@@ -302,7 +303,7 @@ async def _send_key(bot: Bot, chat_id: int, lang: str, telegram_id: int, sub_id:
     if not config_url:
         await bot.send_message(chat_id, t("qr_unavailable", lang))
         return
-    await bot.send_message(chat_id, t("config_key_message", lang, config_url=config_url))
+    await bot.send_message(chat_id, t("config_key_message", lang, config_url=html.escape(config_url)))
 
 
 # --- Root and stack navigation ------------------------------------------------

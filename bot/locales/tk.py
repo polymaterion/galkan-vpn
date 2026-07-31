@@ -104,9 +104,10 @@ STRINGS: dict[str, str] = {
     "qr_caption": "📷 Bu QR-kody AmneziaVPN programmasynda skanirläň",
     "qr_unavailable": "Konfigurasiýa elýeterli däl. Soňra synanyşyň.",
     "config_key_message": (
-        "🔑 Birikdirmek üçin açaryňyz (nusgalamak üçin basyň):\n"
-        "<code>{config_url}</code>\n\n"
-        "AmneziaVPN programmasynda «Konfigurasiýa goşmak» → «Buferden» arkaly ýerleşdiriň."
+        "🔑 Birikdirmek üçin açaryňyz:\n"
+        "<pre>{config_url}</pre>\n\n"
+        "Ýokardaky blokda «Copy Code» basyň, soňra AmneziaVPN programmasynda "
+        "«Konfigurasiýa goşmak» → «Buferden» arkaly ýerleşdiriň."
     ),
 
     "usdt_unavailable": "USDT tölegi wagtlaýyn elýeterli däl. Telegram Stars-y synanyşyň.",
