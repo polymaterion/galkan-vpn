@@ -228,7 +228,7 @@ async def _render_entry(
     elif screen == "support":
         text, markup = t("support_text", lang, support_link=settings.SUPPORT_LINK), back_keyboard(lang)
     elif screen == "language":
-        text, markup = t("language_prompt", lang), back_keyboard(lang)
+        text, markup = t("language_prompt", lang), language_picker(lang, include_back=True)
     elif screen == "config_ready":
         text = t("config_ready", lang, expires=params.get("expires") or t("unknown_expiry", lang))
         markup = config_ready_keyboard(lang, params.get("config_url"), int(params["subscription_id"]))
