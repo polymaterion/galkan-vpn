@@ -20,8 +20,10 @@ import logging
 
 from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from bot import navigation
 from bot.billing_client import billing_client
 from bot.config import settings
 from bot.keyboards.keyboards import admin_back_keyboard, admin_menu
@@ -38,30 +40,39 @@ def _is_admin(user_id: int) -> bool:
 # --- Admin panel entry / navigation ---
 
 @router.message(Command("admin"))
-async def cmd_admin(msg: Message, lang: str):
+async def cmd_admin(msg: Message, state: FSMContext, lang: str):
     if not _is_admin(msg.from_user.id):
         await msg.answer(t("adm_access_denied", lang))
         return
-    await msg.answer(t("adm_panel_title", lang), reply_markup=admin_menu(lang))
+    # Admin panel is a branch below the global main screen, so it participates
+    # in the same stack and its own sub-screens can return exactly one level.
+    await navigation.reset(state, "main")
+    await navigation.push(state, "admin_menu")
+    panel = await msg.answer(t("adm_panel_title", lang), reply_markup=admin_menu(lang))
+    await navigation.set_ui_message(state, panel.message_id)
 
 
 @router.callback_query(F.data == "adm_menu")
-async def cb_adm_menu(cb: CallbackQuery, lang: str):
+async def cb_adm_menu(cb: CallbackQuery, state: FSMContext, lang: str):
     """Back button target for every admin sub-screen — stays within the
     admin panel, never falls through to the customer menu."""
     if not _is_admin(cb.from_user.id):
         await cb.answer(t("adm_no_access", lang), show_alert=True)
         return
+    await navigation.reset(state, "main")
+    await navigation.push(state, "admin_menu")
+    await navigation.set_ui_message(state, cb.message.message_id)
     await cb.message.edit_text(t("adm_panel_title", lang), reply_markup=admin_menu(lang))
     await cb.answer()
 
 
 # --- Users ---
-@router.callback_query(F.data == "adm_users")
-async def adm_users(cb: CallbackQuery, lang: str):
+@router.callback_query(F.data == "nav:admin:users")
+async def adm_users(cb: CallbackQuery, state: FSMContext, lang: str):
     if not _is_admin(cb.from_user.id):
         await cb.answer(t("adm_no_access", lang), show_alert=True)
         return
+    await navigation.push(state, "admin_users")
     try:
         data = await billing_client.admin_list_users()
     except Exception as e:
@@ -80,11 +91,12 @@ async def adm_users(cb: CallbackQuery, lang: str):
 
 
 # --- Subscriptions ---
-@router.callback_query(F.data == "adm_subs")
-async def adm_subs(cb: CallbackQuery, lang: str):
+@router.callback_query(F.data == "nav:admin:subs")
+async def adm_subs(cb: CallbackQuery, state: FSMContext, lang: str):
     if not _is_admin(cb.from_user.id):
         await cb.answer(t("adm_no_access", lang), show_alert=True)
         return
+    await navigation.push(state, "admin_subs")
     try:
         data = await billing_client.admin_list_subscriptions()
     except Exception as e:
@@ -102,11 +114,12 @@ async def adm_subs(cb: CallbackQuery, lang: str):
 
 
 # --- Payments ---
-@router.callback_query(F.data == "adm_payments")
-async def adm_payments(cb: CallbackQuery, lang: str):
+@router.callback_query(F.data == "nav:admin:payments")
+async def adm_payments(cb: CallbackQuery, state: FSMContext, lang: str):
     if not _is_admin(cb.from_user.id):
         await cb.answer(t("adm_no_access", lang), show_alert=True)
         return
+    await navigation.push(state, "admin_payments")
     try:
         data = await billing_client.admin_list_payments()
     except Exception as e:
@@ -125,11 +138,12 @@ async def adm_payments(cb: CallbackQuery, lang: str):
 
 
 # --- Servers ---
-@router.callback_query(F.data == "adm_servers")
-async def adm_servers(cb: CallbackQuery, lang: str):
+@router.callback_query(F.data == "nav:admin:servers")
+async def adm_servers(cb: CallbackQuery, state: FSMContext, lang: str):
     if not _is_admin(cb.from_user.id):
         await cb.answer(t("adm_no_access", lang), show_alert=True)
         return
+    await navigation.push(state, "admin_servers")
     try:
         data = await billing_client.admin_list_servers()
     except Exception as e:

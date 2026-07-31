@@ -36,6 +36,7 @@ STRINGS: dict[str, str] = {
         "Действует до: {expires}\n"
     ),
     "btn_device_connect": "🔑 Подключить #{n}",
+    "btn_device_open": "📄 Открыть устройство #{n}",
     "btn_device_qr": "📱 QR #{n}",
     "btn_device_renew": "🔄 Продлить #{n} — {price}⭐",
     "status_active": "✅ Активно",
@@ -45,6 +46,12 @@ STRINGS: dict[str, str] = {
     "status_disabled": "🔒 Отключено",
     "status_pending_payment": "💳 Ожидает оплаты",
     "unknown_expiry": "неизвестно",
+    "device_card": (
+        "📄 <b>Устройство #{n}</b>\n\n"
+        "Статус: {status}\n"
+        "Действует до: {expires}\n\n"
+        "Выберите действие:"
+    ),
 
     # --- Buy flow ---
     "plan_name_text": "VPN — {duration_days} дней",

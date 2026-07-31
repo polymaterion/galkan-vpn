@@ -40,6 +40,7 @@ STRINGS: dict[str, str] = {
         "Şu senä çenli hereket edýär: {expires}\n"
     ),
     "btn_device_connect": "🔑 #{n} birikdirmek",
+    "btn_device_open": "📄 #{n} enjamy açmak",
     "btn_device_qr": "📱 #{n} QR",
     "btn_device_renew": "🔄 #{n} uzaltmak — {price}⭐",
     "status_active": "✅ Işjeň",
@@ -49,6 +50,12 @@ STRINGS: dict[str, str] = {
     "status_disabled": "🔒 Öçürilen",
     "status_pending_payment": "💳 Töleg garaşylýar",
     "unknown_expiry": "näbelli",
+    "device_card": (
+        "📄 <b>Enjam #{n}</b>\n\n"
+        "Ýagdaýy: {status}\n"
+        "Şu senä çenli hereket edýär: {expires}\n\n"
+        "Hereketi saýlaň:"
+    ),
 
     "plan_name_text": "VPN — {duration_days} gün",
     "plan_description_text": "AmneziaWG protokoly esasynda {duration_days} günlük çäksiz VPN.",
