@@ -17,16 +17,16 @@ STRINGS: dict[str, str] = {
     "language_saved": "Dil saklandy: Türkmençe ✅",
 
     "welcome": (
-        "👋 <b>VPN Bot</b>-a hoş geldiňiz!\n\n"
+        "👋 <b>Galkan VPN</b>-a hoş geldiňiz!\n\n"
         "🛡 AmneziaWG esasynda howpsuz VPN — päsgelçilikleri yzsyz aşýar.\n\n"
         "Hereketi saýlaň:"
     ),
     "btn_my_devices": "📱 Meniň enjamlarym",
-    "btn_buy_new": "➕ Täze enjam goşmak — {price}⭐",
+    "btn_buy_new": "➕ Enjam goşmak",
     "btn_support": "💬 Goldaw",
     "btn_language": "🌐 Dil",
     "btn_back": "◀️ Yza",
-    "btn_back_to_menu": "◀️ Baş menýa",
+    "btn_back_to_menu": "◀️ Baş menýu",
 
     "devices_title": "📱 <b>Siziň enjamlaryňyz</b>\n\nHer enjam — aýratyn tölenen açar.",
     "devices_empty": (
