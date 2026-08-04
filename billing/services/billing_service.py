@@ -17,6 +17,7 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing.database import AsyncSessionLocal
+from billing.redis_lock import redis_lock, LockTimeoutError
 from billing.repositories.other_repos import (
     AuditRepository,
     OrderRepository,
@@ -269,9 +270,10 @@ class BillingService:
             if server:
                 amnezia = AmneziaClient(base_url=server.base_url, api_key=server.api_key)
                 try:
-                    await amnezia.enable_client(
-                        existing_vc.amnezia_client_id, protocol=existing_vc.protocol
-                    )
+                    async with redis_lock(f"vpn-server:{server.id}"):
+                        await amnezia.enable_client(
+                            existing_vc.amnezia_client_id, protocol=existing_vc.protocol
+                        )
                     existing_vc.status = VpnClientStatus.active
                     sub.status = SubscriptionStatus.active
                     sub.last_provisioned_at = datetime.now(timezone.utc)
@@ -281,7 +283,7 @@ class BillingService:
                         entity_id=existing_vc.id,
                     )
                     return
-                except AmneziaError as e:
+                except (AmneziaError, LockTimeoutError) as e:
                     logger.warning("Enable client failed: %s", e)
                     sub.status = SubscriptionStatus.pending_provisioning
                     return
@@ -310,8 +312,9 @@ class BillingService:
                 protocol=server.protocol,
                 expiresAt=None,  # We manage expiry ourselves
             )
-            resp = await amnezia.create_client(req)
-        except AmneziaError as e:
+            async with redis_lock(f"vpn-server:{server.id}"):
+                resp = await amnezia.create_client(req)
+        except (AmneziaError, LockTimeoutError) as e:
             logger.warning("Create client failed for sub %d: %s", sub.id, e)
             sub.status = SubscriptionStatus.pending_provisioning
             sub.retry_count = (sub.retry_count or 0) + 1
@@ -370,10 +373,11 @@ class BillingService:
                             base_url=server.base_url, api_key=server.api_key
                         )
                         try:
-                            await amnezia.disable_client(vc.amnezia_client_id, vc.protocol)
+                            async with redis_lock(f"vpn-server:{server.id}"):
+                                await amnezia.disable_client(vc.amnezia_client_id, vc.protocol)
                             vc.status = VpnClientStatus.disabled
                             await server_repo.decrement_clients(server.id)
-                        except AmneziaError as e:
+                        except (AmneziaError, LockTimeoutError) as e:
                             logger.warning("Disable client %s failed: %s", vc.amnezia_client_id, e)
 
                 sub.status = SubscriptionStatus.expired
@@ -429,7 +433,8 @@ class BillingService:
             server = await server_repo.get_by_id(vc.server_id)
             if server:
                 amnezia = AmneziaClient(base_url=server.base_url, api_key=server.api_key)
-                await amnezia.disable_client(vc.amnezia_client_id, vc.protocol)
+                async with redis_lock(f"vpn-server:{server.id}"):
+                    await amnezia.disable_client(vc.amnezia_client_id, vc.protocol)
                 vc.status = VpnClientStatus.disabled
                 await server_repo.decrement_clients(server.id)
 
@@ -462,6 +467,84 @@ class BillingService:
             entity_id=sub.id,
             details=json.dumps({"days": days}),
         )
+
+    async def admin_reissue_device(self, session: AsyncSession, sub_id: int) -> str:
+        """
+        Re-provision a device's VPN client from scratch.
+
+        Use this when a client's config_url looks valid but never actually
+        connects — e.g. amnezia-api returned a config that was never applied
+        to the VPN server's WireGuard interface (see billing/redis_lock.py
+        for why that can happen). We best-effort delete the old client on
+        its VPN server (it may already be gone there, which is fine — that's
+        exactly the broken state this command exists to fix), then create a
+        brand new client and update the existing VpnClient row in place
+        (subscription_id is unique, so we never insert a second row for the
+        same subscription).
+
+        Returns the new config_url.
+        """
+        sub_repo = SubscriptionRepository(session)
+        vc_repo = VpnClientRepository(session)
+        server_repo = VpnServerRepository(session)
+        audit = AuditRepository(session)
+
+        sub = await sub_repo.get_by_id(sub_id)
+        if not sub:
+            raise ValueError("Subscription not found")
+
+        vc = await vc_repo.get_by_subscription(sub.id)
+        if not vc:
+            raise ValueError("This subscription has no device to reissue")
+
+        old_server = await server_repo.get_by_id(vc.server_id)
+        if old_server:
+            amnezia = AmneziaClient(base_url=old_server.base_url, api_key=old_server.api_key)
+            try:
+                async with redis_lock(f"vpn-server:{old_server.id}"):
+                    await amnezia.delete_client(vc.amnezia_client_id, vc.protocol)
+            except (AmneziaError, LockTimeoutError) as e:
+                # Expected in the exact scenario this command fixes: the
+                # server never had this peer in the first place.
+                logger.info(
+                    "Best-effort delete of old client %s failed (continuing): %s",
+                    vc.amnezia_client_id,
+                    e,
+                )
+
+        server = await server_repo.select_server()
+        if not server:
+            raise ValueError("No available VPN servers to reissue onto")
+
+        client_name = f"tg_{sub.user_id}_{sub.id}"
+        amnezia = AmneziaClient(base_url=server.base_url, api_key=server.api_key)
+        req = CreateClientRequest(clientName=client_name, protocol=server.protocol, expiresAt=None)
+        async with redis_lock(f"vpn-server:{server.id}"):
+            resp = await amnezia.create_client(req)
+
+        if old_server and old_server.id != server.id:
+            await server_repo.decrement_clients(old_server.id)
+        await server_repo.increment_clients(server.id)
+
+        vc.server_id = server.id
+        vc.amnezia_client_id = resp.client.id
+        vc.client_name = client_name
+        vc.config_url = resp.client.config
+        vc.protocol = resp.client.protocol
+        vc.status = VpnClientStatus.active
+
+        sub.status = SubscriptionStatus.active
+        sub.server_id = server.id
+        sub.last_provisioned_at = datetime.now(timezone.utc)
+
+        await audit.log(
+            AuditAction.vpn_client_created,
+            entity_type="vpn_client",
+            entity_id=vc.id,
+            details="Reissued via admin command",
+        )
+
+        return resp.client.config
 
 
 def billing_plan_repo(session: AsyncSession):

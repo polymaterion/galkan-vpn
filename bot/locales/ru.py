@@ -153,6 +153,11 @@ STRINGS: dict[str, str] = {
     "adm_extend_success": "✅ Подписка #{sub_id} продлена на {days} дней.",
     "adm_disable_usage": "Usage: /disable_sub <sub_id>",
     "adm_disable_success": "✅ Подписка #{sub_id} отключена.",
+    "adm_reissue_usage": "Usage: /reissue_device <sub_id>",
+    "adm_reissue_success": (
+        "✅ Устройство подписки #{sub_id} переиздано. Старый ключ больше не "
+        "действует — новый уже доступен пользователю через «Показать ключ»."
+    ),
     "adm_server_status_usage": "Usage: /server_status <server_id> <active|disabled>",
     "adm_server_status_success": "✅ Сервер #{server_id} → {status}",
     "adm_add_server_usage": (

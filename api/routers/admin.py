@@ -83,6 +83,21 @@ async def disable_subscription(sub_id: int, session=Depends(get_db)):
     return {"ok": True}
 
 
+@router.post("/subscriptions/{sub_id}/reissue")
+async def reissue_device(sub_id: int, session=Depends(get_db)):
+    """
+    Re-provision a subscription's VPN client from scratch (bot command:
+    /reissue_device). Use when a client's config_url looks valid but never
+    connects — the old client is best-effort deleted from its VPN server
+    (it may already be missing there) and a brand new one is created.
+    """
+    try:
+        config_url = await _svc.admin_reissue_device(session, sub_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"ok": True, "config_url": config_url}
+
+
 # ---- Payments ----
 
 @router.get("/payments")

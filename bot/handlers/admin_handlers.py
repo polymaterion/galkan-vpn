@@ -204,6 +204,31 @@ async def cmd_disable_sub(msg: Message, lang: str):
         await msg.answer(t("adm_generic_error", lang, error=e))
 
 
+@router.message(Command("reissue_device"))
+async def cmd_reissue_device(msg: Message, lang: str):
+    """
+    Usage: /reissue_device <sub_id>
+
+    Deletes the device's current VPN client (best-effort — it may already
+    be missing from the server, which is exactly the broken state this
+    command exists to fix) and creates a brand new one for the same
+    subscription. Use this when a customer's key looks valid but never
+    connects.
+    """
+    if not _is_admin(msg.from_user.id):
+        return
+    parts = msg.text.split()
+    if len(parts) < 2:
+        await msg.answer(t("adm_reissue_usage", lang))
+        return
+    try:
+        sub_id = int(parts[1])
+        await billing_client.admin_reissue_device(sub_id)
+        await msg.answer(t("adm_reissue_success", lang, sub_id=sub_id))
+    except Exception as e:
+        await msg.answer(t("adm_generic_error", lang, error=e))
+
+
 @router.message(Command("server_status"))
 async def cmd_server_status(msg: Message, lang: str):
     """Usage: /server_status <server_id> <active|disabled>"""

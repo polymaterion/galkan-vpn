@@ -148,6 +148,11 @@ STRINGS: dict[str, str] = {
     "adm_extend_success": "✅ #{sub_id} abunasy {days} güne uzaldyldy.",
     "adm_disable_usage": "Usage: /disable_sub <sub_id>",
     "adm_disable_success": "✅ #{sub_id} abunasy öçürildi.",
+    "adm_reissue_usage": "Usage: /reissue_device <sub_id>",
+    "adm_reissue_success": (
+        "✅ #{sub_id} abunasynyň enjamy täzeden döredildi. Köne açar indi "
+        "işlemeýär — täzesi ulanyjy üçin «Açary görkezmek» arkaly elýeterli."
+    ),
     "adm_server_status_usage": "Usage: /server_status <server_id> <active|disabled>",
     "adm_server_status_success": "✅ #{server_id} serwer → {status}",
     "adm_add_server_usage": (

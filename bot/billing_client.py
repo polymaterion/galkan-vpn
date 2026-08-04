@@ -169,6 +169,12 @@ class BillingClient:
             resp.raise_for_status()
             return resp.json()
 
+    async def admin_reissue_device(self, sub_id: int) -> dict:
+        async with self._client() as c:
+            resp = await c.post(f"/api/v1/admin/subscriptions/{sub_id}/reissue")
+            resp.raise_for_status()
+            return resp.json()
+
     async def admin_set_server_status(self, server_id: int, status: str) -> dict:
         async with self._client() as c:
             resp = await c.patch(
