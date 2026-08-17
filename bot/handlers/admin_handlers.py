@@ -209,11 +209,15 @@ async def cmd_reissue_device(msg: Message, lang: str):
     """
     Usage: /reissue_device <sub_id>
 
-    Deletes the device's current VPN client (best-effort — it may already
-    be missing from the server, which is exactly the broken state this
-    command exists to fix) and creates a brand new one for the same
-    subscription. Use this when a customer's key looks valid but never
-    connects.
+    (Re-)provisions the VPN client for a subscription. Covers two cases:
+    - The subscription has a VpnClient but it's broken (key looks valid but
+      never connects) — the old client is best-effort deleted and a new one
+      created in its place.
+    - The subscription has NO VpnClient at all — e.g. the purchase went
+      through but provisioning failed before any client was created (a
+      common cause: no VPN server was configured in the DB yet). A fresh
+      client is created for it.
+    Use this any time a customer paid but doesn't have a working key.
     """
     if not _is_admin(msg.from_user.id):
         return

@@ -35,6 +35,7 @@ from bot.keyboards.keyboards import (
     device_card_keyboard,
     devices_keyboard,
     instructions_keyboard,
+    invoice_keyboard,
     language_picker,
     main_menu,
     payment_method_menu,
@@ -210,9 +211,9 @@ async def _plan_view(
     return text, payment_method_menu(lang, mode, target_id, plan["price_stars"])
 
 
-async def _render_entry(
+async def _resolve_screen(
     message: Message, state: FSMContext, lang: str, entry: dict[str, Any]
-) -> None:
+) -> tuple[str, InlineKeyboardMarkup | None]:
     screen = entry.get("screen", "main")
     params = entry.get("params", {})
     if screen == "main":
@@ -244,6 +245,13 @@ async def _render_entry(
     else:
         text, markup = await _main_view(lang)
         await navigation.reset(state)
+    return text, markup
+
+
+async def _render_entry(
+    message: Message, state: FSMContext, lang: str, entry: dict[str, Any]
+) -> None:
+    text, markup = await _resolve_screen(message, state, lang, entry)
     await _edit_view(message, state, text, markup, disable_web_page_preview=True)
 
 
@@ -341,6 +349,20 @@ async def cb_back(cb: CallbackQuery, state: FSMContext, lang: str):
         from bot.keyboards.keyboards import admin_menu
 
         await _edit_view(cb.message, state, t("adm_panel_title", lang), admin_menu(lang))
+    elif cb.message.invoice:
+        # An invoice message is a distinct Telegram-rendered type; it can
+        # never be turned into a normal text message via edit_text (Telegram
+        # rejects that), so going back from it means deleting the invoice
+        # and sending the previous screen as a new message instead.
+        text, markup = await _resolve_screen(cb.message, state, lang, entry)
+        try:
+            await cb.message.delete()
+        except TelegramBadRequest as exc:
+            logger.info("Could not delete invoice message on back: %s", exc)
+        sent = await cb.bot.send_message(
+            cb.message.chat.id, text, reply_markup=markup, disable_web_page_preview=True
+        )
+        await navigation.set_ui_message(state, sent.message_id)
     else:
         await _render_entry(cb.message, state, lang, entry)
     await cb.answer()
@@ -410,7 +432,7 @@ async def cb_instructions(cb: CallbackQuery, state: FSMContext, lang: str):
 # --- Payments -----------------------------------------------------------------
 
 @router.callback_query(F.data.startswith("pay_stars:"))
-async def cb_pay_stars(cb: CallbackQuery, bot: Bot, lang: str):
+async def cb_pay_stars(cb: CallbackQuery, bot: Bot, state: FSMContext, lang: str):
     _, mode, target = cb.data.split(":")
     target_id = int(target) if target != "0" else 0
     try:
@@ -422,6 +444,19 @@ async def cb_pay_stars(cb: CallbackQuery, bot: Bot, lang: str):
         await cb.answer(t("plan_load_error", lang), show_alert=True)
         return
     plan_name = t("plan_name_text", lang, duration_days=plan["duration_days"])
+
+    # Replace the payment-method screen with the invoice: the invoice is
+    # always a separate Telegram-rendered message (it can't be embedded
+    # into a normal text message), so "one screen at a time" here means
+    # deleting the previous bot message rather than editing it in place.
+    # Deletion can fail (message too old, already gone, etc.) — that's not
+    # fatal, we still want the invoice to go out either way.
+    try:
+        await cb.message.delete()
+    except TelegramBadRequest as exc:
+        logger.info("Could not delete pre-invoice message: %s", exc)
+
+    await navigation.push(state, "invoice", mode=mode, target_id=target_id)
     await bot.send_invoice(
         chat_id=cb.from_user.id,
         title=plan_name,
@@ -430,6 +465,7 @@ async def cb_pay_stars(cb: CallbackQuery, bot: Bot, lang: str):
         currency="XTR",
         prices=[LabeledPrice(label=plan_name, amount=plan["price_stars"])],
         provider_token="",
+        reply_markup=invoice_keyboard(lang, plan["price_stars"]),
     )
     await cb.answer()
 

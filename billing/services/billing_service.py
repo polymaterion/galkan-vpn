@@ -470,17 +470,24 @@ class BillingService:
 
     async def admin_reissue_device(self, session: AsyncSession, sub_id: int) -> str:
         """
-        Re-provision a device's VPN client from scratch.
+        (Re-)provision a device's VPN client, covering two distinct failure
+        modes with one command:
 
-        Use this when a client's config_url looks valid but never actually
-        connects — e.g. amnezia-api returned a config that was never applied
-        to the VPN server's WireGuard interface (see billing/redis_lock.py
-        for why that can happen). We best-effort delete the old client on
-        its VPN server (it may already be gone there, which is fine — that's
-        exactly the broken state this command exists to fix), then create a
-        brand new client and update the existing VpnClient row in place
-        (subscription_id is unique, so we never insert a second row for the
-        same subscription).
+        1. A VpnClient row exists but is broken — e.g. amnezia-api returned
+           a config that was never applied to the VPN server's WireGuard
+           interface (see billing/redis_lock.py for why that could happen).
+           We best-effort delete the old client on its VPN server (it may
+           already be gone there, which is fine — that's exactly the broken
+           state this command exists to fix), then update the row in place
+           (subscription_id is unique, so we never insert a second row for
+           the same subscription).
+
+        2. No VpnClient row exists at all — provisioning failed before a
+           client was ever created (e.g. no VPN server was configured yet
+           at purchase time, which leaves the Subscription in `error` status
+           with nothing under it). In this case we create a fresh VpnClient
+           row via the repository instead of trying to update a row that
+           was never there.
 
         Returns the new config_url.
         """
@@ -494,11 +501,9 @@ class BillingService:
             raise ValueError("Subscription not found")
 
         vc = await vc_repo.get_by_subscription(sub.id)
-        if not vc:
-            raise ValueError("This subscription has no device to reissue")
 
-        old_server = await server_repo.get_by_id(vc.server_id)
-        if old_server:
+        old_server = await server_repo.get_by_id(vc.server_id) if vc else None
+        if vc and old_server:
             amnezia = AmneziaClient(base_url=old_server.base_url, api_key=old_server.api_key)
             try:
                 async with redis_lock(f"vpn-server:{old_server.id}"):
@@ -514,7 +519,7 @@ class BillingService:
 
         server = await server_repo.select_server()
         if not server:
-            raise ValueError("No available VPN servers to reissue onto")
+            raise ValueError("No available VPN servers to provision onto")
 
         client_name = f"tg_{sub.user_id}_{sub.id}"
         amnezia = AmneziaClient(base_url=server.base_url, api_key=server.api_key)
@@ -524,14 +529,27 @@ class BillingService:
 
         if old_server and old_server.id != server.id:
             await server_repo.decrement_clients(old_server.id)
-        await server_repo.increment_clients(server.id)
+        if not (old_server and old_server.id == server.id):
+            await server_repo.increment_clients(server.id)
 
-        vc.server_id = server.id
-        vc.amnezia_client_id = resp.client.id
-        vc.client_name = client_name
-        vc.config_url = resp.client.config
-        vc.protocol = resp.client.protocol
-        vc.status = VpnClientStatus.active
+        if vc:
+            vc.server_id = server.id
+            vc.amnezia_client_id = resp.client.id
+            vc.client_name = client_name
+            vc.config_url = resp.client.config
+            vc.protocol = resp.client.protocol
+            vc.status = VpnClientStatus.active
+            vc_id = vc.id
+        else:
+            new_vc = await vc_repo.create(
+                subscription_id=sub.id,
+                server_id=server.id,
+                amnezia_client_id=resp.client.id,
+                client_name=client_name,
+                config_url=resp.client.config,
+                protocol=resp.client.protocol,
+            )
+            vc_id = new_vc.id
 
         sub.status = SubscriptionStatus.active
         sub.server_id = server.id
@@ -540,8 +558,8 @@ class BillingService:
         await audit.log(
             AuditAction.vpn_client_created,
             entity_type="vpn_client",
-            entity_id=vc.id,
-            details="Reissued via admin command",
+            entity_id=vc_id,
+            details="Provisioned via admin command" if not vc else "Reissued via admin command",
         )
 
         return resp.client.config

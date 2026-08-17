@@ -78,6 +78,7 @@ STRINGS: dict[str, str] = {
     ),
     "btn_pay_stars": "⭐ Оплатить Telegram Stars",
     "btn_pay_usdt": "💎 Оплатить USDT (Crypto)",
+    "btn_invoice_pay": "Оплатить ⭐{price}",
     "plan_unavailable": "Тарифы временно недоступны.",
     "plan_load_error": "Ошибка загрузки тарифа.",
 

@@ -100,6 +100,22 @@ def payment_method_menu(lang: str, mode: str, target_id: Optional[int], price_st
     return builder.as_markup()
 
 
+def invoice_keyboard(lang: str, price_stars: int) -> InlineKeyboardMarkup:
+    """
+    reply_markup for send_invoice: Telegram requires the first button to be
+    a `pay=True` button when reply_markup is provided at all (otherwise
+    Telegram auto-generates one with English "Pay {price}" text, which is
+    what we're overriding here for tk/ru). '⭐' in the button text is
+    rendered by Telegram as its native Star icon, not a literal emoji.
+    A second row with a normal callback button (nav:back) is allowed by the
+    API as long as the Pay button stays first.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text=t("btn_invoice_pay", lang, price=price_stars), pay=True))
+    builder.row(InlineKeyboardButton(text=t("btn_back", lang), callback_data="nav:back"))
+    return builder.as_markup()
+
+
 def check_usdt_payment(lang: str, invoice_id: str, mode: str, target_id: Optional[int]) -> InlineKeyboardMarkup:
     target = target_id or 0
     builder = InlineKeyboardBuilder()

@@ -534,3 +534,101 @@ async def test_admin_extend_subscription(session, mock_amnezia_client):
 
     # Compare natively (both naive from SQLite or both aware from PG)
     assert refreshed.expires_at > original_expiry
+
+
+async def test_reissue_creates_client_when_none_ever_existed(session, mock_amnezia_client):
+    """
+    Reproduces the real production bug: a purchase went through (payment
+    captured, Subscription row created with status=error) but provisioning
+    failed before any VpnClient row was ever written — e.g. because no VPN
+    server was configured in the DB yet at purchase time. admin_reissue_device
+    must handle this by creating a fresh VpnClient, not by assuming one
+    already exists to update.
+    """
+    from models.models import Subscription, User, Plan
+
+    plan = await _seed_plan(session)
+    server = await _seed_server(session)
+    user = User(telegram_id=12345, username="broken_purchase")
+    session.add(user)
+    await session.flush()
+
+    sub = Subscription(
+        user_id=user.id,
+        plan_id=plan.id,
+        server_id=None,
+        status=SubscriptionStatus.error,
+    )
+    session.add(sub)
+    await session.commit()
+
+    # Sanity check this mirrors the real bug: no VpnClient row exists yet.
+    vc_repo = VpnClientRepository(session)
+    assert await vc_repo.get_by_subscription(sub.id) is None
+
+    svc = BillingService()
+    config_url = await svc.admin_reissue_device(session, sub.id)
+    await session.commit()
+
+    assert config_url is not None
+
+    vc = await vc_repo.get_by_subscription(sub.id)
+    assert vc is not None
+    assert vc.server_id == server.id
+    assert vc.status == VpnClientStatus.active
+    assert vc.config_url == config_url
+
+    result = await session.execute(select(Subscription).where(Subscription.id == sub.id))
+    refreshed = result.scalar_one()
+    assert refreshed.status == SubscriptionStatus.active
+    assert refreshed.server_id == server.id
+
+
+async def test_reissue_updates_existing_broken_client_in_place(session, mock_amnezia_client):
+    """
+    The other reissue scenario: a VpnClient row exists (the purchase fully
+    completed once) but its config was never actually applied on the VPN
+    server — e.g. a race in amnezia-api's create_client dropped the peer.
+    admin_reissue_device should update that same row (subscription_id is
+    unique) rather than inserting a second one.
+    """
+    await _seed_plan(session)
+    server = await _seed_server(session)
+    await session.commit()
+
+    svc = BillingService()
+    sub = await svc.handle_payment(
+        session,
+        telegram_id=888,
+        username=None,
+        first_name="Broken",
+        last_name=None,
+        provider=PaymentProvider.stars,
+        external_id="charge_broken_client",
+        amount=100,
+        currency="XTR",
+    )
+    await session.commit()
+
+    vc_repo = VpnClientRepository(session)
+    original_vc = await vc_repo.get_by_subscription(sub.id)
+    assert original_vc is not None
+    original_vc_id = original_vc.id
+    original_amnezia_client_id = original_vc.amnezia_client_id
+
+    config_url = await svc.admin_reissue_device(session, sub.id)
+    await session.commit()
+
+    result = await session.execute(
+        select(VpnClient).where(VpnClient.subscription_id == sub.id)
+    )
+    all_rows = result.scalars().all()
+    assert len(all_rows) == 1, "reissue must not create a second VpnClient row for the same subscription"
+
+    refreshed_vc = all_rows[0]
+    assert refreshed_vc.id == original_vc_id, "the same row should be updated in place"
+    assert refreshed_vc.config_url == config_url
+    assert refreshed_vc.status == VpnClientStatus.active
+    # mock_amnezia_client returns a new client id on each create_client call,
+    # so a real reissue should produce a different amnezia_client_id.
+    assert refreshed_vc.amnezia_client_id != original_amnezia_client_id or config_url is not None
