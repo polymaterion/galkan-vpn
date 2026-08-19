@@ -59,6 +59,9 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
       REDIS_URL: redis://${REDIS_HOST}:${REDIS_PORT}/${REDIS_DB}
+    networks:
+      - default
+      - amnezia_api_net
     # Exposes ONLY the public /connect/{token} landing page to the internet
     # (the "Open in Amnezia" button target). Every other route on this port
     # still requires the X-Billing-Key header — see api/dependencies.py and
@@ -86,6 +89,9 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
       REDIS_URL: redis://${REDIS_HOST}:${REDIS_PORT}/${REDIS_DB}
+    networks:
+      - default
+      - amnezia_api_net
     depends_on:
       billing:
         condition: service_healthy
@@ -106,3 +112,15 @@ services:
 volumes:
   postgres_data:
   redis_data:
+
+networks:
+  default:
+    # Default network for this project's own services (db, redis, bot, etc).
+  amnezia_api_net:
+    # The amnezia-api project's own compose network. Joining it lets billing
+    # and worker reach amnezia-api by container name (http://amnezia-api:4001)
+    # without opening its port to the outside world or relying on the host's
+    # external IP, which amnezia-api's docker-proxy doesn't accept connections
+    # on anyway (it's bound to 127.0.0.1 on the host, not 0.0.0.0).
+    external: true
+    name: amnezia-api_default
