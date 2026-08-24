@@ -112,6 +112,7 @@ class AmneziaClient:
         except (httpx.ConnectError, httpx.TimeoutException):
             return False
 
+    @_retryable
     async def get_server_info(self) -> ServerInfo:
         """GET /server — returns CPU, RAM, uptime, client count, etc."""
         try:
@@ -123,6 +124,7 @@ class AmneziaClient:
         data = resp.json()
         return ServerInfo.model_validate(data)
 
+    @_retryable
     async def get_clients(
         self, skip: int = 0, limit: int = 100
     ) -> list[AmneziaClientRecord]:
@@ -137,6 +139,7 @@ class AmneziaClient:
         items = data.get("items", data) if isinstance(data, dict) else data
         return [AmneziaClientRecord.model_validate(i) for i in items]
 
+    @_retryable
     async def create_client(self, req: CreateClientRequest) -> CreateClientResponse:
         """POST /clients"""
         try:
@@ -147,6 +150,7 @@ class AmneziaClient:
         self._raise_for_status(resp)
         return CreateClientResponse.model_validate(resp.json())
 
+    @_retryable
     async def delete_client(self, client_id: str, protocol: str = "amneziawg2") -> None:
         """DELETE /clients  body: {clientId, protocol}"""
         try:
@@ -160,6 +164,7 @@ class AmneziaClient:
             raise AmneziaConnectionError(str(exc)) from exc
         self._raise_for_status(resp)
 
+    @_retryable
     async def update_client(
         self, client_id: str, req: UpdateClientRequest, protocol: str = "amneziawg2"
     ) -> None:

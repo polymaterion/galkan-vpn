@@ -9,11 +9,17 @@ from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import select
 from billing.services.billing_service import BillingService
-from billing.repositories.other_repos import PlanRepository, VpnClientRepository
+from billing.repositories.other_repos import (
+    AuditRepository,
+    PlanRepository,
+    VpnClientRepository,
+)
 from billing.repositories.server_repo import VpnServerRepository
 from billing.repositories.subscription_repo import SubscriptionRepository
 from billing.repositories.user_repo import UserRepository
+from integrations.amnezia.errors import AmneziaError
 from models.models import (
+    AuditAction,
     Plan,
     SubscriptionStatus,
     VpnClient,
@@ -632,3 +638,115 @@ async def test_reissue_updates_existing_broken_client_in_place(session, mock_amn
     # mock_amnezia_client returns a new client id on each create_client call,
     # so a real reissue should produce a different amnezia_client_id.
     assert refreshed_vc.amnezia_client_id != original_amnezia_client_id or config_url is not None
+
+
+async def test_reissue_failure_marks_old_client_deleted_and_next_retry_succeeds(
+    session, mock_amnezia_client
+):
+    """
+    Closes the known limitation from the reissue fix: if create_client()
+    fails while reissuing a device that already had a VpnClient row (the
+    old client was already best-effort deleted from its server above), the
+    old row must not be left in a state that makes the *next* retry cycle
+    waste attempts on enable_client() against a client that no longer
+    exists anywhere — it should instead go straight to creating a fresh one.
+
+    Also verifies the row-reuse fix in _provision_subscription: once the old
+    row is marked `deleted`, the next successful attempt must UPDATE that
+    same row (subscription_id is unique) rather than INSERT a second one.
+    """
+    plan = await _seed_plan(session)
+    server = await _seed_server(session)
+    await session.commit()
+
+    svc = BillingService()
+    sub = await svc.handle_payment(
+        session,
+        telegram_id=999,
+        username=None,
+        first_name="Reissue",
+        last_name="Failure",
+        provider=PaymentProvider.stars,
+        external_id="charge_reissue_failure",
+        amount=100,
+        currency="XTR",
+    )
+    await session.commit()
+
+    vc_repo = VpnClientRepository(session)
+    server_repo = VpnServerRepository(session)
+    sub_repo = SubscriptionRepository(session)
+
+    original_vc = await vc_repo.get_by_subscription(sub.id)
+    assert original_vc is not None
+    original_vc_id = original_vc.id
+
+    server_after_purchase = await server_repo.get_by_id(server.id)
+    clients_after_purchase = server_after_purchase.current_clients
+    assert clients_after_purchase == 1
+
+    # Make the next create_client() call fail, simulating amnezia-api being
+    # unreachable at the exact moment reissue tries to provision the
+    # replacement client (the old one was already deleted from the server
+    # by this point in admin_reissue_device).
+    with patch(
+        "billing.services.billing_service.AmneziaClient"
+    ) as MockClientDuringFailure:
+        failing_instance = AsyncMock()
+        MockClientDuringFailure.return_value = failing_instance
+        failing_instance.delete_client.return_value = None
+        failing_instance.create_client.side_effect = AmneziaError("amnezia-api unreachable")
+
+        with pytest.raises(AmneziaError):
+            await svc.admin_reissue_device(session, sub.id)
+        await session.commit()
+
+    # --- Partial-failure bookkeeping must have been applied ---
+    refreshed_sub = await sub_repo.get_by_id(sub.id)
+    assert refreshed_sub.status == SubscriptionStatus.pending_provisioning
+    assert refreshed_sub.retry_count == 1
+
+    refreshed_vc = await vc_repo.get_by_subscription(sub.id)
+    assert refreshed_vc is not None
+    assert refreshed_vc.id == original_vc_id, "must not have inserted a second row"
+    assert refreshed_vc.status == VpnClientStatus.deleted, (
+        "old client must be marked deleted so the next retry cycle creates "
+        "a fresh one instead of retrying enable_client against a client "
+        "that no longer exists on any server"
+    )
+
+    server_after_failure = await server_repo.get_by_id(server.id)
+    assert server_after_failure.current_clients == 0, (
+        "old server's count must be decremented even though reissue failed "
+        "partway through — the client really was removed from it"
+    )
+
+    audit = AuditRepository(session)
+    result = await session.execute(
+        select(VpnClient).where(VpnClient.id == original_vc_id)
+    )
+    assert result.scalar_one() is not None  # row still exists, just deleted
+
+    # --- The next retry cycle must succeed by updating the same row ---
+    refreshed_sub.retry_count = 0  # below the escalate-to-error threshold
+    await svc._provision_subscription(session, refreshed_sub)
+    await session.commit()
+
+    final_sub = await sub_repo.get_by_id(sub.id)
+    assert final_sub.status == SubscriptionStatus.active
+
+    result = await session.execute(
+        select(VpnClient).where(VpnClient.subscription_id == sub.id)
+    )
+    all_rows = result.scalars().all()
+    assert len(all_rows) == 1, (
+        "the retry must update the deleted row in place, not insert a "
+        "second row and violate the subscription_id uniqueness constraint"
+    )
+    assert all_rows[0].id == original_vc_id
+    assert all_rows[0].status == VpnClientStatus.active
+
+    server_after_retry = await server_repo.get_by_id(server.id)
+    assert server_after_retry.current_clients == 1, (
+        "the successful retry must increment the count back to 1"
+    )

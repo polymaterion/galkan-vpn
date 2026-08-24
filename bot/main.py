@@ -13,6 +13,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from bot.config import settings
 from bot.handlers.admin_handlers import router as admin_router
+from bot.handlers.broadcast_handlers import router as broadcast_router
 from bot.handlers.main_handlers import router as main_router
 from bot.middlewares.language import LanguageMiddleware
 
@@ -34,8 +35,13 @@ async def main():
     dp.message.middleware(lang_mw)
     dp.callback_query.middleware(lang_mw)
 
-    dp.include_router(main_router)
+    # broadcast_router first: while an admin is mid-/broadcast (FSM states
+    # waiting_content/waiting_buttons/waiting_confirm), their plain text and
+    # media messages must be captured by those state-filtered handlers
+    # rather than falling through to main_router's catch-alls.
+    dp.include_router(broadcast_router)
     dp.include_router(admin_router)
+    dp.include_router(main_router)
 
     logger.info("Bot starting (polling mode)...")
     await bot.delete_webhook(drop_pending_updates=True)

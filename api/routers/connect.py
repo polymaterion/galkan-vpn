@@ -12,6 +12,9 @@ same public port.
 """
 from __future__ import annotations
 
+import html
+import json
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import HTMLResponse
 
@@ -64,6 +67,14 @@ def _page(config_url: str | None, expired: bool = False, not_found: bool = False
 <p>{body}</p>
 </div></body></html>"""
 
+    # config_url comes from our own DB, not user input, but this route is
+    # public and unauthenticated — never trust it enough to skip escaping.
+    # html.escape() for the HTML attribute context (href="...");
+    # json.dumps() for the JS string-literal context (it safely escapes
+    # quotes/backslashes AND produces a valid quoted JS string in one step).
+    safe_href = html.escape(config_url, quote=True)
+    safe_js_string = json.dumps(config_url)
+
     return f"""<!DOCTYPE html>
 <html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -75,7 +86,7 @@ def _page(config_url: str | None, expired: bool = False, not_found: bool = False
   <p>Нажмите кнопку ниже, чтобы открыть его в приложении <b>AmneziaVPN</b> —
   всё настроится автоматически.</p>
 
-  <a class="btn primary" id="open-btn" href="{config_url}">🔑 Открыть в Amnezia</a>
+  <a class="btn primary" id="open-btn" href="{safe_href}">🔑 Открыть в Amnezia</a>
 
   <p class="hint">Если приложение не открылось — оно не установлено.</p>
 
@@ -87,7 +98,7 @@ def _page(config_url: str | None, expired: bool = False, not_found: bool = False
   // Best-effort automatic attempt. Many mobile browsers only allow custom
   // URL schemes to fire from a genuine user tap, so this may silently do
   // nothing — the visible button above is the reliable path either way.
-  try {{ window.location.href = "{config_url}"; }} catch (e) {{}}
+  try {{ window.location.href = {safe_js_string}; }} catch (e) {{}}
 </script>
 </body></html>"""
 

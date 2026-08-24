@@ -1,0 +1,32 @@
+# Secrets — never bake real credentials into an image layer.
+# .env.example is fine and intentionally NOT excluded; only the real file is.
+.env
+.env.*
+!.env.example
+
+# Version control history — not needed at runtime, and can carry old
+# secrets/config from earlier commits even after they're removed from HEAD.
+.git
+.gitignore
+
+# Test artifacts and caches — not part of the deployable service, and
+# requirements-dev.txt (test-only deps) already keeps them out of pip
+# install; no reason to also copy the files themselves into the image.
+tests/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Editor/OS cruft
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Docs and local-only files with no bearing on the running service
+README.md
+LICENSE
+PROJECT_STATUS.md

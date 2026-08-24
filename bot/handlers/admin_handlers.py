@@ -137,6 +137,26 @@ async def adm_payments(cb: CallbackQuery, state: FSMContext, lang: str):
     await cb.answer()
 
 
+# --- Broadcast ---
+@router.callback_query(F.data == "nav:admin:broadcast")
+async def adm_broadcast_entry(cb: CallbackQuery, state: FSMContext, lang: str):
+    """Same entry point as the /broadcast command, reached from the admin
+    panel button. Uses BroadcastStates (aiogram FSM) rather than the
+    navigation stack used elsewhere in this file — the broadcast flow
+    collects multi-step input (content, then buttons, then confirmation)
+    rather than just rendering a screen, so it needs real state, not just a
+    "which screen" pointer. It intentionally leaves the admin panel message
+    as-is and sends the prompt as a new message, same as /broadcast does."""
+    if not _is_admin(cb.from_user.id):
+        await cb.answer(t("adm_no_access", lang), show_alert=True)
+        return
+    from bot.handlers.broadcast_handlers import BroadcastStates
+
+    await state.set_state(BroadcastStates.waiting_content)
+    await cb.answer()
+    await cb.message.answer(t("bc_start", lang))
+
+
 # --- Servers ---
 @router.callback_query(F.data == "nav:admin:servers")
 async def adm_servers(cb: CallbackQuery, state: FSMContext, lang: str):

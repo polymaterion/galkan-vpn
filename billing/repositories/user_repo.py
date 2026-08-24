@@ -51,6 +51,16 @@ class UserRepository:
         )
         return list(result.scalars().all())
 
+    async def get_all_telegram_ids(self) -> list[int]:
+        """Every telegram_id we've ever seen (anyone who has /start'ed the
+        bot at least once, since get_or_create() runs on every update via
+        LanguageMiddleware). Used by /broadcast — unlike get_all(), this is
+        unpaginated since a broadcast needs the complete recipient list."""
+        result = await self.session.execute(
+            select(User.telegram_id).where(User.is_banned == False)
+        )
+        return [row[0] for row in result.all()]
+
     async def set_language(self, telegram_id: int, language: str) -> User:
         user, _ = await self.get_or_create(telegram_id=telegram_id)
         user.language = language

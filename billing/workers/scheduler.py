@@ -40,7 +40,17 @@ async def task_retry_provisioning():
 
 
 def main():
-    scheduler = AsyncIOScheduler(timezone="UTC")
+    # AsyncIOScheduler.start() calls asyncio.get_event_loop() internally if
+    # no loop is passed explicitly (see apscheduler's own source) — and that
+    # call already emits DeprecationWarning with no loop running in the main
+    # thread on Python 3.12, with no guarantee it keeps working in future
+    # versions. Create the loop explicitly once and hand it to both the
+    # scheduler and this function's own run_forever(), so neither relies on
+    # the deprecated "current loop" lookup.
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    scheduler = AsyncIOScheduler(event_loop=loop, timezone="UTC")
 
     scheduler.add_job(
         task_disable_expired,
@@ -61,7 +71,7 @@ def main():
     logger.info("Worker started. Jobs: %s", [j.id for j in scheduler.get_jobs()])
 
     try:
-        asyncio.get_event_loop().run_forever()
+        loop.run_forever()
     except (KeyboardInterrupt, SystemExit):
         logger.info("Worker shutting down")
         scheduler.shutdown()

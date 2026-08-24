@@ -125,7 +125,44 @@ class BillingClient:
             resp.raise_for_status()
             return resp.json()
 
+    # --- Trial ---
+
+    async def trial_eligible(self, telegram_id: int) -> bool:
+        async with self._client() as c:
+            resp = await c.get("/api/v1/trial/eligible", params={"telegram_id": telegram_id})
+            resp.raise_for_status()
+            return resp.json()
+
+    async def grant_trial(
+        self,
+        telegram_id: int,
+        username: Optional[str],
+        first_name: Optional[str],
+        last_name: Optional[str],
+    ) -> dict:
+        """Raises httpx.HTTPStatusError (400) if the trial was already used
+        or no trial plan is configured — callers should catch and show a
+        friendly message rather than let it propagate."""
+        async with self._client() as c:
+            resp = await c.post(
+                "/api/v1/trial/grant",
+                json={
+                    "telegram_id": telegram_id,
+                    "username": username,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()
+
     # --- Admin helpers ---
+
+    async def admin_broadcast_ids(self) -> list[int]:
+        async with self._client() as c:
+            resp = await c.get("/api/v1/admin/users/broadcast_ids")
+            resp.raise_for_status()
+            return resp.json()["telegram_ids"]
 
     async def admin_list_users(self, offset: int = 0) -> dict:
         async with self._client() as c:

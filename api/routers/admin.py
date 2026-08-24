@@ -17,7 +17,9 @@ from billing.repositories.server_repo import VpnServerRepository
 from billing.repositories.subscription_repo import SubscriptionRepository
 from billing.repositories.user_repo import UserRepository
 from billing.services.billing_service import BillingService
+from billing.redis_lock import LockTimeoutError
 from integrations.amnezia.client import AmneziaClient
+from integrations.amnezia.errors import AmneziaError
 from models.models import VpnServerStatus
 
 router = APIRouter(dependencies=[Depends(verify_internal_key)])
@@ -45,6 +47,17 @@ async def list_users(offset: int = 0, limit: int = 50, session=Depends(get_db)):
             for u in users
         ],
     }
+
+
+@router.get("/users/broadcast_ids")
+async def list_broadcast_ids(session=Depends(get_db)):
+    """Every telegram_id that has ever interacted with the bot (not just
+    the ones with a subscription), excluding banned users. Unpaginated —
+    used by the bot's /broadcast command to build the full recipient list,
+    including everyone who only ever ran /start without buying anything."""
+    repo = UserRepository(session)
+    ids = await repo.get_all_telegram_ids()
+    return {"telegram_ids": ids, "total": len(ids)}
 
 
 # ---- Subscriptions ----
@@ -95,6 +108,21 @@ async def reissue_device(sub_id: int, session=Depends(get_db)):
         config_url = await _svc.admin_reissue_device(session, sub_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except (AmneziaError, LockTimeoutError) as e:
+        # admin_reissue_device already updated the subscription/vpn_client
+        # rows to reflect the partial failure (pending_provisioning,
+        # retry_count, vc marked deleted, old server's count decremented) —
+        # but those changes live only in this session's pending transaction
+        # until committed. get_db() commits only on a clean return; since
+        # the HTTPException raised below propagates straight through it,
+        # get_db() would instead roll back everything admin_reissue_device
+        # just did, silently discarding that bookkeeping. Commit explicitly
+        # here, before raising, so the next retry cycle actually sees it.
+        await session.commit()
+        raise HTTPException(
+            status_code=503,
+            detail=f"VPN server unavailable, try again shortly: {e}",
+        )
     return {"ok": True, "config_url": config_url}
 
 

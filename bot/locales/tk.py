@@ -176,4 +176,56 @@ STRINGS: dict[str, str] = {
     ),
     "adm_add_server_success": "✅ #{id} «{name}» serweri goşuldy we işjeň (protokol: {protocol}).",
     "adm_generic_error": "❌ Ýalňyşlyk: {error}",
+
+    # --- Broadcast (/broadcast) ---
+    "adm_btn_broadcast": "📣 Habar ýaýratmak",
+    "bc_start": (
+        "📣 <b>Habar ýaýratmak</b>\n\n"
+        "Ýaýradylmaly habary iberiň: tekst, surat/wideo we ýazgy, ýa-da GIF. "
+        "HTML bezegini ulanyp bolýar (<b>galyň</b>, <i>eğik</i>).\n\n"
+        "Ýatyrmak üçin — /cancel"
+    ),
+    "bc_empty_content": "Habar boş bolup bilmez. Tekst, surat ýa-da wideo iberiň.",
+    "bc_ask_buttons": (
+        "Indi habaryň aşagyna baglanyşyk düwmelerini goşup bolýar (hökmany däl).\n\n"
+        "Format — bir setirde bir düwme:\n"
+        "<code>Düwme teksti - https://example.com</code>\n\n"
+        "Iň köp 2 düwme. Düwme gerek däl bolsa — «-» ýa-da «Geçmek» iberiň.\n\n"
+        "Ýatyrmak üçin — /cancel"
+    ),
+    "bc_btn_skip": "Geçmek",
+    "bc_invalid_button_line": (
+        "{n}-nji setiri düşündirip bolmady: «{line}».\n"
+        "Format: <code>Düwme teksti - https://example.com</code>. Gaýtadan synanyşyň."
+    ),
+    "bc_invalid_button_url": (
+        "{n}-nji setirdäki baglanyşyk http:// ýa-da https:// bilen başlamaly: «{url}»."
+    ),
+    "bc_too_many_buttons": "Düwme köp ({n}). Iň köp 2 — gaýtadan iberiň.",
+    "bc_preview_title": "👁 <b>Habaryň öňünden görnüşi</b>\n\nUlanyjylar habary şeýle görer:",
+    "bc_confirm_prompt": "Alyjylar: <b>{count}</b>. Ýaýratmak iberilsinmi?",
+    "btn_bc_send": "🚀 Ibermek",
+    "btn_bc_cancel": "❌ Ýatyr",
+    "bc_cancelled": "Ýaýratmak ýatyryldy.",
+    "bc_sending": "⏳ Ýaýratmak başlady: {total} alyjy. Bu birazajyk wagt alyp biler...",
+    "bc_done": (
+        "✅ <b>Ýaýratmak tamamlandy</b>\n\n"
+        "Gowşuryldy: {sent}\n"
+        "Gowşurylmady: {failed}\n"
+        "Jemi alyjylar: {total}"
+    ),
+    "bc_no_recipients": "Ýaýratmak üçin alyjy ýok (bazada ulanyjy ýok).",
+
+    # --- Trial ---
+    "btn_trial": "🎁 3 gün mugt synap görmek",
+    "trial_confirm_text": (
+        "🎁 <b>Synag döwri — 3 gün mugt</b>\n\n"
+        "3 gün töleg tölemeýän doly VPN elýeterliligi. Diňe bir gezek işjeňleşdirilýär.\n\n"
+        "Işjeňleşdirilsinmi?"
+    ),
+    "btn_trial_activate": "🎁 3 gün mugt almak",
+    "trial_granting": "⏳ Synag döwri işjeňleşdirilýär...",
+    "trial_already_used": "Siz eýýäm synag döwrüni ulandyňyz. «Meniň enjamlarym» bölüminde tölegli abuna resmileşdiriň.",
+    "trial_unavailable": "Synag döwri häzir elýeterli däl. Soňra synanyşyň ýa-da goldawa ýüz tutuň.",
+    "trial_error": "❗ Synag döwrüni işjeňleşdirip bolmady. Soňra synanyşyň ýa-da goldawa ýüz tutuň.",
 }

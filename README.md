@@ -1,288 +1,216 @@
-# VPN Bot MVP
+# galkan-vpn
 
-Telegram-бот для продажи VPN-подписок на базе **AmneziaWG** через REST API  
-[kyoresuas/amnezia-api](https://github.com/kyoresuas/amnezia-api).
+Telegram-бот продажи VPN-доступа. Оплата через Telegram Stars или USDT (CryptoPay). Провижининг VPN-клиентов — через отдельный сторонний сервис [`amnezia-api`](https://github.com/kyoresuas/amnezia-api), который этот проект не модифицирует, а только вызывает по сети.
+
+Бот двуязычный (русский/туркменский), ориентирован на туркменоязычную аудиторию.
+
+Текущий статус проекта, история изменений и открытые вопросы — в [`PROJECT_STATUS.md`](./PROJECT_STATUS.md). Этот README — про то, как развернуть и пользоваться; за «что происходило и что осталось» — туда.
+
+---
 
 ## Архитектура
 
 ```
-Telegram User
-     │
-     ▼
-[Telegram Bot]  (aiogram 3, polling)
-     │  HTTP + X-Billing-Key
-     ▼
-[Billing Service]  (FastAPI + SQLAlchemy + PostgreSQL)
-     │  HTTP + x-api-key
-     ▼
-[Amnezia API]  (kyoresuas/amnezia-api, running on each VPN server)
-     │
-     ▼
-[WireGuard / Xray on VPN Server]
+┌──────────┐        ┌──────────┐        ┌─────────────┐        ┌────────────┐
+│   bot    │──httpx─▶│ billing  │──httpx─▶│ amnezia-api │──exec─▶│  WireGuard │
+│ (aiogram)│         │ (FastAPI)│         │ (сторонний) │        │  / xray    │
+└──────────┘         └────┬─────┘        └─────────────┘        └────────────┘
+                           │
+              ┌────────────┼────────────┐
+              ▼            ▼            ▼
+          PostgreSQL     Redis       worker
+                                  (APScheduler,
+                                   фоновые задачи)
 ```
 
-**Worker** (APScheduler) работает рядом с Billing Service и каждые N минут:
-- отключает истёкшие подписки
-- повторяет неудавшийся provisioning
+- **`bot`** — aiogram 3, всё общение с пользователем. Сам никогда не трогает БД напрямую — только ходит в `billing` по HTTP (`bot/billing_client.py`).
+- **`billing`** — FastAPI-сервис, вся бизнес-логика (платежи, подписки, провижининг). Единственный, кто пишет в PostgreSQL.
+- **`worker`** — тот же образ, что `billing`, но команда `python -m billing.workers.scheduler`: раз в 5 минут отключает истёкшие подписки, раз в 3 минуты повторяет застрявший провижининг.
+- **`amnezia-api`** — **не часть этого репозитория**. Отдельный проект, разворачивается отдельно на каждом VPN-сервере, управляет WireGuard/xray-конфигами через `docker exec`. `billing`/`worker` обращаются к нему по сети как к чёрному ящику.
+- **Redis** используется для распределённой блокировки (`billing/redis_lock.py`) — сериализует конкурентные запросы на изменение клиентов к одному и тому же VPN-серверу, так как `amnezia-api` сам не защищён от гонок при записи конфига.
 
-## Дерево проекта
+## Структура репозитория
 
 ```
-vpn-bot/
-├── bot/                      # Telegram-бот (aiogram 3)
-│   ├── main.py               # Точка входа, polling
-│   ├── config.py             # Настройки из ENV
-│   ├── billing_client.py     # HTTP-клиент к Billing Service
-│   ├── utils.py              # QR-генерация
-│   ├── handlers/
-│   │   ├── main_handlers.py  # /start, buy, config, support
-│   │   └── admin_handlers.py # /admin, /extend, /disable_sub
-│   ├── keyboards/
-│   │   └── keyboards.py      # Все inline-клавиатуры
-│   └── payments/
-│       └── crypto_pay.py     # CryptoPay USDT адаптер
-│
-├── billing/                  # Billing Service (бизнес-логика)
-│   ├── database.py           # AsyncSession factory
-│   ├── services/
-│   │   └── billing_service.py  # Оплата, provisioning, продление, expiry
-│   ├── repositories/
-│   │   ├── user_repo.py
-│   │   ├── subscription_repo.py
-│   │   ├── server_repo.py    # Выбор сервера с учётом нагрузки
-│   │   └── other_repos.py    # Plan, Order, Payment, VpnClient, Audit
-│   └── workers/
-│       └── scheduler.py      # APScheduler background tasks
-│
-├── integrations/
-│   └── amnezia/              # Тонкая обёртка над amnezia-api REST
-│       ├── client.py         # AmneziaClient (HTTP)
-│       ├── schemas.py        # Pydantic-схемы запросов/ответов
-│       └── errors.py         # Типизированные исключения
-│
-├── api/                      # FastAPI Billing Service
-│   ├── main.py               # FastAPI app, middleware
-│   ├── dependencies.py       # Internal API key auth
-│   └── routers/
-│       ├── payments.py       # POST /payments/stars|usdt
-│       ├── subscriptions.py  # GET /subscriptions/my|plan
-│       └── admin.py          # Admin CRUD
-│
-├── models/
-│   ├── __init__.py           # Base, TimestampMixin
-│   └── models.py             # Все ORM-модели
-│
-├── migrations/
-│   ├── env.py                # Alembic async env
-│   └── versions/
-│       └── 0001_initial.py   # Начальная схема
-│
-├── seeds/
-│   └── seed.py               # Один тариф + два VPN-сервера
-│
-├── tests/
-│   ├── conftest.py           # Shared fixtures (SQLite in-memory)
-│   ├── unit/
-│   │   └── test_billing_service.py  # 8 unit-тестов
-│   └── integration/
-│       └── test_api.py       # FastAPI endpoint-тесты
-│
-├── infra/
-│   ├── Dockerfile.billing
-│   └── Dockerfile.bot
-│
-├── docker-compose.yml
-├── alembic.ini
-├── .env.example
-├── requirements.billing.txt
-└── requirements.bot.txt
+api/                      # FastAPI-приложение (billing)
+├── main.py                 # точка входа, /health, /ready
+├── dependencies.py          # проверка X-Billing-Key
+└── routers/
+    ├── payments.py          # POST /stars, /usdt — обработка оплат
+    ├── subscriptions.py      # GET /my, /devices — подписки пользователя
+    ├── users.py              # GET /me, POST /language
+    ├── admin.py              # управление пользователями/подписками/серверами/платежами
+    └── connect.py            # GET /connect/{token} — публичная страница "Открыть в Amnezia"
+
+billing/
+├── database.py              # engine, AsyncSessionLocal, get_db()
+├── redis_lock.py             # распределённая блокировка per-VPN-server
+├── services/billing_service.py  # вся бизнес-логика: платежи, провижининг, admin-действия
+├── repositories/             # доступ к БД по сущностям (users, subscriptions, servers, ...)
+└── workers/scheduler.py      # APScheduler-джобы (истечение подписок, ретрай провижининга)
+
+bot/
+├── main.py                  # точка входа, регистрация роутеров
+├── config.py                  # настройки из .env (pydantic-settings)
+├── navigation.py               # стек экранов поверх aiogram FSM
+├── billing_client.py            # HTTP-клиент к billing
+├── handlers/
+│   ├── main_handlers.py          # весь пользовательский флоу
+│   └── admin_handlers.py          # /admin, /extend, /reissue_device и т.д.
+├── keyboards/keyboards.py         # inline-клавиатуры
+├── locales/{ru,tk}.py               # весь пользовательский текст, по 86 ключей в каждом
+├── middlewares/language.py         # подставляет lang= в каждый хендлер
+└── payments/crypto_pay.py          # обёртка над CryptoPay API
+
+integrations/amnezia/         # типизированный клиент к amnezia-api (httpx + pydantic)
+models/models.py               # SQLAlchemy-модели, единый источник схемы
+migrations/versions/            # Alembic-миграции
+seeds/seed.py                    # первичное наполнение: план + VPN-серверы из env
+tests/                           # pytest (unit — billing_service; integration — API)
+infra/Dockerfile.{billing,bot}    # образы
+docker-compose.yml
 ```
+
+## Предварительные требования
+
+- Docker + Docker Compose.
+- **Уже развёрнутый и работающий `amnezia-api`** хотя бы на одном сервере — этот проект без него бесполезен, он только вызывает его API. См. [репозиторий amnezia-api](https://github.com/kyoresuas/amnezia-api) для установки. Держите под рукой: URL, на котором он слушает, и `FASTIFY_API_KEY`, который печатает его `setup.sh`.
+- Telegram-бот, зарегистрированный через [@BotFather](https://t.me/BotFather), и его токен.
+- Свой Telegram user id (например, через [@userinfobot](https://t.me/userinfobot)) — понадобится для `ADMIN_IDS`.
+- Опционально: аккаунт [@CryptoBot](https://t.me/CryptoBot) и токен приложения, если нужна оплата в USDT (без него доступна только оплата Stars).
 
 ## Быстрый старт
 
-### 1. Клонировать репозиторий
-
 ```bash
-git clone https://github.com/your-org/vpn-bot.git
-cd vpn-bot
-```
-
-### 2. Подготовить `.env`
-
-```bash
+git clone <this-repo>
+cd galkan-vpn
 cp .env.example .env
 ```
 
-Обязательно заполнить:
+Откройте `.env` и заполните как минимум:
 
-| Переменная | Где взять |
+| Переменная | Что это |
 |---|---|
-| `TELEGRAM_TOKEN` | [@BotFather](https://t.me/BotFather) |
-| `ADMIN_IDS` | Ваш Telegram ID (через [@userinfobot](https://t.me/userinfobot)) |
-| `BILLING_SECRET_KEY` | Любая длинная случайная строка |
-| `POSTGRES_PASSWORD` | Любой сложный пароль |
-| `VPN_SERVER1_URL` | `http://<ip-вашего-vpn-сервера>:4001` |
-| `VPN_SERVER1_KEY` | `FASTIFY_API_KEY` из `.env` на VPN-сервере |
-| `CRYPTOPAY_TOKEN` | [@CryptoBot](https://t.me/CryptoBot) → Create App (опционально) |
+| `TELEGRAM_TOKEN` | токен от @BotFather |
+| `ADMIN_IDS` | ваш Telegram user id (через запятую, если админов несколько) |
+| `POSTGRES_PASSWORD` | замените дефолт на реальный пароль |
+| `BILLING_SECRET_KEY` | любая длинная случайная строка — **обязательна**, сервис не запустится без неё |
+| `PUBLIC_BASE_URL` / `PUBLIC_PORT` | см. секцию ниже — без них не заработает кнопка «Открыть в Amnezia» |
+| `VPN_SERVER1_URL` / `VPN_SERVER1_KEY` | адрес и ключ вашего `amnezia-api` |
 
-### 3. Запустить
+Полный список переменных с комментариями — в самом `.env.example`, он актуальнее любого README и обновляется вместе с кодом.
+
+> **Заметка:** `PLAN_DURATION_DAYS` в `.env.example` сейчас ни на что не влияет — реальная длительность тарифа захардкожена как 30 дней в `seeds/seed.py`. Если нужен другой срок, меняйте `duration_days=30` там до первого запуска seed. После — ни бот, ни `PATCH /api/v1/admin/plans/{id}` (он меняет только цену) это не редактируют, нужен прямой `UPDATE plans SET duration_days = ...` в БД.
 
 ```bash
 docker compose up -d --build
 ```
 
-Docker Compose автоматически:
-1. Запустит PostgreSQL и Redis
-2. Выполнит миграции Alembic
-3. Загрузит seed-данные (тариф + два сервера)
-4. Запустит Billing Service
-5. Запустит Worker
-6. Запустит Telegram Bot
+Это по цепочке: поднимет `db`+`redis` → прогонит `migrate` (Alembic) → прогонит `seed` (создаст тариф и настроенные VPN-серверы) → запустит `billing`+`worker`+`bot`.
 
-### 4. Проверить работу
+Проверить, что billing поднялся:
 
 ```bash
-# Статус всех контейнеров
-docker compose ps
-
-# Логи бота
-docker compose logs -f bot
-
-# Логи billing service
-docker compose logs -f billing
-
-# Health check
-curl http://localhost:8000/health
+curl http://localhost:${PUBLIC_PORT:-8080}/health   # {"status": "ok"} — процесс жив
+curl http://localhost:${PUBLIC_PORT:-8080}/ready     # проверяет реальное подключение к БД
 ```
 
-### 5. Открыть бота в Telegram и нажать /start
+Дальше — идите в Telegram и напишите своему боту `/start`.
 
----
+### Важно про сеть
 
-## Настройка VPN-серверов
+`docker-compose.yml` объявляет `amnezia_api_net` как **внешнюю** сеть (`external: true`, имя `amnezia-api_default`) — это сеть, которую создаёт свой собственный compose-стек `amnezia-api`. Если `amnezia-api` ещё не запущен на этой машине, `docker compose up` здесь упадёт с ошибкой "network not found". Разверните `amnezia-api` первым.
 
-Каждый VPN-сервер должен иметь запущенный [kyoresuas/amnezia-api](https://github.com/kyoresuas/amnezia-api):
+Если `amnezia-api` работает на **другой** машине (не на том же хосте, что `billing`/`worker`) — присоединение к его docker-сети по имени не сработает, вместо этого укажите его реальный публичный адрес и порт в `VPN_SERVER{N}_URL` и уберите `amnezia_api_net` из `docker-compose.yml`.
 
-```bash
-# На VPN-сервере:
-git clone https://github.com/kyoresuas/amnezia-api.git
-cd amnezia-api
-bash scripts/setup.sh
+### Про `PUBLIC_BASE_URL`
+
+`billing` отдаёт по адресу `/connect/{token}` **публичную, неаутентифицированную** HTML-страницу с кнопкой «Открыть в Amnezia» — именно на неё ведёт кнопка показа ключа в боте. Чтобы кнопка вообще появилась, эта страница должна быть доступна из интернета:
+
+```
+PUBLIC_BASE_URL=http://<ip-вашего-сервера>:8080
+PUBLIC_PORT=8080
 ```
 
-После установки возьмите `FASTIFY_API_KEY` из `.env` на VPN-сервере и пропишите его в `VPN_SERVER1_KEY` в вашем `.env`.
+и порт должен быть открыт в файрволе (`ufw allow 8080/tcp`). Для продакшена лучше поставить перед `billing` reverse-proxy с TLS (nginx/Caddy) и указать `https://ваш-домен` в `PUBLIC_BASE_URL` — VPN-ключ в открытом виде не должен ходить по HTTP.
 
-Дополнительные серверы можно добавить через `seeds/seed.py` или напрямую в БД.
+Без `PUBLIC_BASE_URL` бот всё равно работает, просто без этой кнопки — конфиг тогда показывается только текстом/QR-кодом прямо в чате.
 
----
+## Добавление VPN-серверов
 
-## Админ-команды в Telegram
+Два способа, оба работают в любой момент (не только при первом запуске):
 
-Доступны только пользователям из `ADMIN_IDS`.
+**Через .env + seed** — только если это первый запуск (`seed.py` не пересеивает, если в БД уже есть хотя бы один сервер):
+```
+VPN_SERVER1_URL=http://amnezia-api:4001
+VPN_SERVER1_KEY=<ваш FASTIFY_API_KEY>
+VPN_SERVER1_NAME=Server-EU        # опционально
+VPN_SERVER1_REGION=EU             # опционально, дефолт EU
+VPN_SERVER1_WEIGHT=100            # опционально, влияет на балансировку
+VPN_SERVER1_MAX_CLIENTS=200       # опционально, дефолт 200
+VPN_SERVER1_PROTOCOL=amneziawg2   # опционально, дефолт amneziawg2
+```
+Слоты `VPN_SERVER2_*`, `VPN_SERVER3_*` и так далее (до 10) работают так же — заполняйте по одному на сервер.
 
-| Команда | Описание |
+**Через команду бота, в любой момент** (проще для второго и последующих серверов, не требует пересборки):
+```
+/add_server <name> <base_url> <api_key> [region] [weight] [max_clients] [protocol]
+```
+Пример:
+```
+/add_server Server-DE http://45.10.20.30 8f2a1c... DE 100 200 amneziawg2
+```
+`protocol` обязан совпадать с тем, что реально включено на этом сервере (`PROTOCOLS_ENABLED` в `.env` того `amnezia-api`) — допустимые значения: `amneziawg`, `amneziawg2`, `xray`. Несовпадение = все попытки создать клиента на этом сервере будут падать с 400.
+
+## Команды бота
+
+**Пользовательские:**
+- `/start` — открывает главное меню (или выбор языка, если это первый запуск для этого пользователя).
+
+Остальное — через inline-кнопки: покупка/продление, просмотр устройств, показ ключа/QR-кода, поддержка, инструкция по подключению.
+
+**Админские** (только для `ADMIN_IDS`):
+
+| Команда | Назначение |
 |---|---|
-| `/admin` | Панель управления (инлайн-меню) |
-| `/extend <sub_id> [days]` | Продлить подписку на N дней (по умолч. 30) |
-| `/disable_sub <sub_id>` | Отключить подписку |
-| `/server_status <id> <active\|disabled>` | Включить/выключить сервер |
+| `/admin` | inline-панель: списки пользователей/подписок/платежей/серверов |
+| `/extend <sub_id> [days]` | продлить подписку (по умолчанию на 30 дней) |
+| `/disable_sub <sub_id>` | отключить подписку и её VPN-клиента |
+| `/reissue_device <sub_id>` | переиздать VPN-клиента — когда у клиента валидный на вид ключ, но подключение не работает, **или** когда провижининг вообще не завершился (ключа нет вовсе). Безопасно вызывать в обоих случаях. |
+| `/server_status <server_id> <active\|disabled>` | включить/отключить сервер (отключённый не участвует в балансировке новых клиентов). Модель поддерживает и третье значение, `maintenance` — команда бота его не документирует в своей usage-строке, но реально принимает: `VpnServerStatus("maintenance")` пройдёт валидацию так же, как `active`/`disabled`. |
+| `/add_server ...` | см. секцию выше |
 
-Через инлайн-меню `/admin` → кнопки:
-- 👥 Пользователи — список с Telegram ID и никами
-- 📋 Подписки — последние подписки с статусами
-- 💰 Платежи — история платежей
-- 🖥 Серверы — статус, нагрузка, CPU/RAM
-
----
-
-## Оплата
-
-### Telegram Stars
-Встроена в Telegram. Не требует отдельного провайдера.  
-Установите `PLAN_PRICE_STARS=100` (100 XTR ≈ $1.99 по курсу Telegram).
-
-### USDT через CryptoPay
-1. Откройте [@CryptoBot](https://t.me/CryptoBot) → *Create App*
-2. Получите API-токен и вставьте в `CRYPTOPAY_TOKEN`
-3. Установите `CRYPTOPAY_NETWORK=mainnet` (или `testnet` для тестирования)
-4. Установите `PLAN_PRICE_USDT=3.00`
-
----
-
-## Запуск тестов
+## Тесты
 
 ```bash
-# Установить зависимости локально
-pip install -r requirements.billing.txt aiosqlite pytest-asyncio respx
-
-# Запустить тесты
-pytest tests/ -v
+pip install -r requirements-dev.txt
+pytest
 ```
 
-Тесты используют SQLite in-memory — PostgreSQL не нужен.
+`requirements-dev.txt` содержит `requirements.billing.txt` плюс тестовые зависимости — прод-образ (`infra/Dockerfile.billing`) ставит только `requirements.billing.txt`, тестовые пакеты в него не попадают.
 
----
+Известно падающий тест и почему — см. «Известные проблемы» в `PROJECT_STATUS.md`; он не блокирует остальные.
 
-## Переменные окружения (полный список)
+## Разработка
 
-```env
-# Telegram
-TELEGRAM_TOKEN=          # токен бота
-ADMIN_IDS=               # ID администраторов через запятую
+Локальный запуск отдельного сервиса без Docker (например, для отладки `billing`):
 
-# БД
-POSTGRES_HOST=db
-POSTGRES_PORT=5432
-POSTGRES_DB=vpnbot
-POSTGRES_USER=vpnbot
-POSTGRES_PASSWORD=
-
-# Redis
-REDIS_HOST=redis
-REDIS_PORT=6379
-REDIS_DB=0
-
-# Internal API auth между ботом и billing
-BILLING_SECRET_KEY=
-BILLING_BASE_URL=http://billing:8000
-
-# Stars оплата
-PLAN_PRICE_STARS=100
-
-# USDT (CryptoPay)
-CRYPTOPAY_TOKEN=
-CRYPTOPAY_NETWORK=mainnet
-PLAN_PRICE_USDT=3.00
-
-# Тариф
-PLAN_DURATION_DAYS=30
-
-# VPN серверы (для seed.py)
-VPN_SERVER1_URL=http://vpn1:4001
-VPN_SERVER1_KEY=
-VPN_SERVER2_URL=http://vpn2:4001
-VPN_SERVER2_KEY=
-
-# Прочее
-ENVIRONMENT=production
-LOG_LEVEL=INFO
-SUPPORT_LINK=https://t.me/your_support
+```bash
+pip install -r requirements-dev.txt
+export DATABASE_URL=postgresql+asyncpg://vpnbot:pass@localhost:5432/vpnbot
+export REDIS_URL=redis://localhost:6379/0
+export BILLING_SECRET_KEY=любая-строка
+uvicorn api.main:app --reload
 ```
 
----
+`docker-compose.yml` не публикует порты Postgres/Redis на хост (по умолчанию доступны только внутри docker-сети) — для этого сценария временно добавьте `ports: ["5432:5432"]` к сервису `db` (и/или `["6379:6379"]` к `redis`) в свою локальную копию compose-файла.
 
-## Что можно улучшить
-
-1. **Webhook вместо polling** — использовать Telegram webhook + nginx для production
-2. **Уведомления** — слать пользователю сообщение за 3 дня до истечения подписки
-3. **Реферальная программа** — реферальные коды и бонусные дни
-4. **Мультитарифность** — несколько планов (1 месяц / 3 месяца / год)
-5. **Web-админка** — React/Vue dashboard поверх существующего admin API
-6. **Метрики** — Prometheus + Grafana для мониторинга платежей и нагрузки серверов
-7. **Xray протокол** — сейчас используется amneziawg, можно добавить xray через тот же адаптер
-8. **Auto-scaling** — автоматически добавлять новые серверы при превышении порога нагрузки
-9. **Stripe/YooKassa** — дополнительные платёжные адаптеры
-10. **Rate limiting** — защита API от флуда через slowapi или redis
-11. **Celery вместо APScheduler** — для масштабирования воркеров на несколько инстансов
-12. **E2E тесты** — тесты с реальной БД через testcontainers
+Миграции:
+```bash
+alembic upgrade head              # применить все
+alembic revision --autogenerate -m "описание"   # создать новую после правки models/models.py
 ```
+
+## Лицензия
+
+См. [`LICENSE`](./LICENSE).

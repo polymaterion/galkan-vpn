@@ -20,9 +20,18 @@ def language_picker(lang: str = "ru", include_back: bool = False) -> InlineKeybo
     return builder.as_markup()
 
 
-def main_menu(lang: str, price_stars: int) -> InlineKeyboardMarkup:
-    """The only screen without a back button: it is the navigation root."""
+def main_menu(lang: str, price_stars: int, show_trial: bool = False) -> InlineKeyboardMarkup:
+    """The only screen without a back button: it is the navigation root.
+
+    show_trial adds a free-trial button right under the header — passed as
+    True only when the caller has confirmed (via billing_client.trial_eligible)
+    that this user hasn't claimed their trial yet. Kept as a separate
+    top-of-menu row rather than folded into "Add device" so it's visible
+    without extra taps and disappears on its own once used.
+    """
     builder = InlineKeyboardBuilder()
+    if show_trial:
+        builder.row(InlineKeyboardButton(text=t("btn_trial", lang), callback_data="nav:trial"))
     builder.row(InlineKeyboardButton(text=t("btn_my_devices", lang), callback_data="nav:devices"))
     builder.row(
         InlineKeyboardButton(
@@ -32,6 +41,13 @@ def main_menu(lang: str, price_stars: int) -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text=t("btn_support", lang), callback_data="nav:support"))
     builder.row(InlineKeyboardButton(text=t("btn_instructions", lang), callback_data="nav:instructions"))
     builder.row(InlineKeyboardButton(text=t("btn_language", lang), callback_data="nav:language"))
+    return builder.as_markup()
+
+
+def trial_confirm_keyboard(lang: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text=t("btn_trial_activate", lang), callback_data="trial:activate"))
+    builder.row(InlineKeyboardButton(text=t("btn_back", lang), callback_data="nav:back"))
     return builder.as_markup()
 
 
@@ -155,6 +171,7 @@ def admin_menu(lang: str, show_back: bool = True) -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text=t("adm_btn_subs", lang), callback_data="nav:admin:subs"))
     builder.row(InlineKeyboardButton(text=t("adm_btn_payments", lang), callback_data="nav:admin:payments"))
     builder.row(InlineKeyboardButton(text=t("adm_btn_servers", lang), callback_data="nav:admin:servers"))
+    builder.row(InlineKeyboardButton(text=t("adm_btn_broadcast", lang), callback_data="nav:admin:broadcast"))
     if show_back:
         builder.row(InlineKeyboardButton(text=t("btn_back", lang), callback_data="start"))
     return builder.as_markup()
@@ -162,3 +179,29 @@ def admin_menu(lang: str, show_back: bool = True) -> InlineKeyboardMarkup:
 
 def admin_back_keyboard(lang: str) -> InlineKeyboardMarkup:
     return back_keyboard(lang)
+
+
+def broadcast_skip_keyboard(lang: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text=t("bc_btn_skip", lang), callback_data="bc:skip_buttons"))
+    return builder.as_markup()
+
+
+def broadcast_confirm_keyboard(lang: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text=t("btn_bc_send", lang), callback_data="bc:send"))
+    builder.row(InlineKeyboardButton(text=t("btn_bc_cancel", lang), callback_data="bc:cancel"))
+    return builder.as_markup()
+
+
+def broadcast_link_buttons(buttons: list[tuple[str, str]]) -> Optional[InlineKeyboardMarkup]:
+    """Builds the url-button row(s) that get attached to the actual
+    broadcast message itself (as opposed to the two keyboards above, which
+    control the admin's compose flow). One button per row, in the order
+    given — matches how they were entered."""
+    if not buttons:
+        return None
+    builder = InlineKeyboardBuilder()
+    for text, url in buttons:
+        builder.row(InlineKeyboardButton(text=text, url=url))
+    return builder.as_markup()

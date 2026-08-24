@@ -1,7 +1,7 @@
 import random
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import case, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.models import VpnServer, VpnServerStatus
@@ -91,11 +91,56 @@ class VpnServerRepository:
         return servers[-1]
 
     async def increment_clients(self, server_id: int) -> None:
-        server = await self.get_by_id(server_id)
-        if server:
-            server.current_clients += 1
+        """
+        Atomic UPDATE current_clients = current_clients + 1 — a single SQL
+        statement, not read-modify-write in Python. Two concurrent calls for
+        the same server_id (from two concurrent provisioning requests) both
+        apply correctly instead of one clobbering the other's increment.
+        """
+        stmt = (
+            update(VpnServer)
+            .where(VpnServer.id == server_id)
+            .values(current_clients=VpnServer.current_clients + 1)
+            .returning(VpnServer.current_clients)
+        )
+        result = await self.session.execute(stmt)
+        new_value = result.scalar_one_or_none()
+        if new_value is not None:
+            await self._sync_identity_map(server_id, new_value)
 
     async def decrement_clients(self, server_id: int) -> None:
-        server = await self.get_by_id(server_id)
-        if server and server.current_clients > 0:
-            server.current_clients -= 1
+        """
+        Atomic UPDATE, floored at 0 via a CASE expression evaluated by the
+        DB itself (portable across Postgres/SQLite — no GREATEST/LEAST,
+        which SQLite doesn't have) rather than a separate read-then-check-
+        then-write, which is exactly the same race as increment_clients.
+        """
+        stmt = (
+            update(VpnServer)
+            .where(VpnServer.id == server_id)
+            .values(
+                current_clients=case(
+                    (VpnServer.current_clients > 0, VpnServer.current_clients - 1),
+                    else_=0,
+                )
+            )
+            .returning(VpnServer.current_clients)
+        )
+        result = await self.session.execute(stmt)
+        new_value = result.scalar_one_or_none()
+        if new_value is not None:
+            await self._sync_identity_map(server_id, new_value)
+
+    async def _sync_identity_map(self, server_id: int, new_value: int) -> None:
+        """
+        A raw UPDATE bypasses the ORM, so if a VpnServer object for this id
+        is already loaded in this session (e.g. the caller just used it to
+        make the provisioning call), that Python object's current_clients
+        attribute would otherwise go stale for the rest of this transaction.
+        Session.get() checks the session's identity map before issuing any
+        SQL, so this does not add a query when the object is already
+        loaded — it's a plain dict lookup in that case.
+        """
+        server_obj = await self.session.get(VpnServer, server_id)
+        if server_obj is not None:
+            server_obj.current_clients = new_value

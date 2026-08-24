@@ -14,6 +14,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from billing.database import AsyncSessionLocal
@@ -67,6 +68,37 @@ class BillingService:
     # Payment processing
     # -----------------------------------------------------------------
 
+    async def _find_subscription_for_duplicate_event(
+        self,
+        session: AsyncSession,
+        *,
+        provider: PaymentProvider,
+        external_id: str,
+        telegram_id: int,
+    ) -> Optional[Subscription]:
+        """
+        Look up the subscription that a duplicate payment event should
+        resolve to. Shared by both duplicate-detection paths in
+        handle_payment(): the cheap exists()-based shortcut and the
+        IntegrityError handler that catches a genuine concurrent race.
+        """
+        pay_repo = PaymentRepository(session)
+        payment = await pay_repo.get_by_external_id(provider, external_id)
+        if payment and payment.subscription_id:
+            sub_repo = SubscriptionRepository(session)
+            sub = await sub_repo.get_by_id(payment.subscription_id)
+            if sub:
+                return sub
+        # Fallback heuristic (shouldn't normally be reached)
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_telegram_id(telegram_id)
+        if user:
+            sub_repo = SubscriptionRepository(session)
+            sub = await sub_repo.get_latest_for_user(user.id)
+            if sub:
+                return sub
+        return None
+
     async def handle_payment(
         self,
         session: AsyncSession,
@@ -100,24 +132,21 @@ class BillingService:
         evt_repo = ProcessedEventRepository(session)
         event_key = f"{provider.value}:{external_id}"
 
-        # --- Idempotency check ---
+        # --- Idempotency check (fast path) ---
+        # This exists() check is a TOCTOU race by itself — two near-simultaneous
+        # retries of the same webhook can both see False here before either one
+        # commits. It's kept only as a cheap shortcut to skip the work below on
+        # the common case (a real retry, arriving after the first one already
+        # completed). The actual guarantee against double-processing is the DB
+        # unique constraint on ProcessedEvent.event_id / Payment(provider,
+        # external_id), enforced below via the IntegrityError handler.
         if await evt_repo.exists(event_key):
             logger.info("Duplicate event %s ignored", event_key)
-            pay_repo = PaymentRepository(session)
-            payment = await pay_repo.get_by_external_id(provider, external_id)
-            if payment and payment.subscription_id:
-                sub_repo = SubscriptionRepository(session)
-                sub = await sub_repo.get_by_id(payment.subscription_id)
-                if sub:
-                    return sub
-            # Fallback heuristic (shouldn't normally be reached)
-            user_repo = UserRepository(session)
-            user = await user_repo.get_by_telegram_id(telegram_id)
-            if user:
-                sub_repo = SubscriptionRepository(session)
-                sub = await sub_repo.get_latest_for_user(user.id)
-                if sub:
-                    return sub
+            existing = await self._find_subscription_for_duplicate_event(
+                session, provider=provider, external_id=external_id, telegram_id=telegram_id
+            )
+            if existing:
+                return existing
             raise ValueError("Duplicate event but no subscription found — investigate")
 
         # --- Ensure user exists ---
@@ -145,24 +174,38 @@ class BillingService:
             if not target_sub or target_sub.user_id != user.id:
                 raise ValueError("Subscription to renew not found or does not belong to this user")
 
-        # --- Create order + payment ---
+        # --- Create order + payment + idempotency marker, atomically ---
+        # These three inserts are wrapped in one SAVEPOINT so a concurrent
+        # duplicate (another retry of the same webhook, racing past the
+        # exists() shortcut above) is caught by the DB unique constraints
+        # (ProcessedEvent.event_id, Payment(provider, external_id)) instead
+        # of silently double-provisioning. On conflict we roll back just this
+        # savepoint and fall through to the same "return the existing
+        # subscription" path used by the fast-path duplicate check.
         order_repo = OrderRepository(session)
-        order = await order_repo.create(user_id=user.id, plan_id=plan.id)
-
         pay_repo = PaymentRepository(session)
-        payment = await pay_repo.create(
-            user_id=user.id,
-            order_id=order.id,
-            provider=provider,
-            external_id=external_id,
-            amount=amount,
-            currency=currency,
-        )
-        await pay_repo.mark_paid(payment)
-        order.status = OrderStatus.completed
-
-        # --- Mark event as processed (before provisioning to avoid retry confusion) ---
-        await evt_repo.mark(event_key)
+        try:
+            async with session.begin_nested():
+                order = await order_repo.create(user_id=user.id, plan_id=plan.id)
+                payment = await pay_repo.create(
+                    user_id=user.id,
+                    order_id=order.id,
+                    provider=provider,
+                    external_id=external_id,
+                    amount=amount,
+                    currency=currency,
+                )
+                await pay_repo.mark_paid(payment)
+                order.status = OrderStatus.completed
+                await evt_repo.mark(event_key)
+        except IntegrityError:
+            logger.info("Concurrent duplicate event %s caught at insert time", event_key)
+            existing = await self._find_subscription_for_duplicate_event(
+                session, provider=provider, external_id=external_id, telegram_id=telegram_id
+            )
+            if existing:
+                return existing
+            raise ValueError("Duplicate event (race) but no subscription found — investigate")
 
         audit = AuditRepository(session)
         await audit.log(
@@ -186,6 +229,69 @@ class BillingService:
         await self._provision_subscription(session, sub)
 
         return sub
+
+    # -----------------------------------------------------------------
+    # Trial period
+    # -----------------------------------------------------------------
+
+    async def grant_trial(
+        self,
+        session: AsyncSession,
+        *,
+        telegram_id: int,
+        username: Optional[str] = None,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+    ) -> Subscription:
+        """
+        Grants the one-time free trial subscription to a Telegram user.
+        Used both for brand-new users (auto-granted on their first /start)
+        and for pre-existing users going through the /start=trial deep
+        link. Idempotent per-user via User.trial_used — a second call
+        raises instead of silently handing out a second trial.
+
+        Unlike handle_payment(), there's no payment/order here: this is a
+        straight subscription grant, reusing the same
+        create-then-provision path so the resulting device behaves
+        identically to a paid one (shows up in "my devices", expires and
+        gets disabled by the scheduler like any other subscription, etc).
+        """
+        user_repo = UserRepository(session)
+        user, _ = await user_repo.get_or_create(
+            telegram_id=telegram_id,
+            username=username,
+            first_name=first_name,
+            last_name=last_name,
+        )
+
+        if user.trial_used:
+            raise ValueError("Trial already used")
+
+        plan_repo = billing_plan_repo(session)
+        plan = await plan_repo.get_trial_plan()
+        if not plan:
+            raise ValueError("No trial plan configured")
+
+        user.trial_used = True
+
+        sub = await self._create_new_subscription(session, user_id=user.id, plan=plan)
+        await session.flush()
+
+        audit = AuditRepository(session)
+        await audit.log(
+            AuditAction.trial_granted,
+            user_id=user.id,
+            entity_type="subscription",
+            entity_id=sub.id,
+        )
+
+        await self._provision_subscription(session, sub)
+        return sub
+
+    async def has_used_trial(self, session: AsyncSession, telegram_id: int) -> bool:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_telegram_id(telegram_id)
+        return bool(user and user.trial_used)
 
     # -----------------------------------------------------------------
     # Subscription lifecycle
@@ -286,6 +392,18 @@ class BillingService:
                 except (AmneziaError, LockTimeoutError) as e:
                     logger.warning("Enable client failed: %s", e)
                     sub.status = SubscriptionStatus.pending_provisioning
+                    # Must increment retry_count here too, or a subscription
+                    # stuck on this branch never reaches the >=5 threshold in
+                    # retry_pending_provisioning() and retries forever instead
+                    # of escalating to `error`.
+                    sub.retry_count = (sub.retry_count or 0) + 1
+                    await audit.log(
+                        AuditAction.provisioning_failed,
+                        user_id=sub.user_id,
+                        entity_type="subscription",
+                        entity_id=sub.id,
+                        details=str(e),
+                    )
                     return
 
         # Select a VPN server
@@ -327,15 +445,28 @@ class BillingService:
             )
             return
 
-        # Persist VPN client record
-        vc = await vc_repo.create(
-            subscription_id=sub.id,
-            server_id=server.id,
-            amnezia_client_id=resp.client.id,
-            client_name=client_name,
-            config_url=resp.client.config,
-            protocol=resp.client.protocol,
-        )
+        # Persist VPN client record. If a row for this subscription already
+        # exists (e.g. marked `deleted` by a prior failed reissue attempt —
+        # see admin_reissue_device), update it in place rather than
+        # inserting a second row: subscription_id is unique, so a blind
+        # create() here would raise IntegrityError against that stale row.
+        if existing_vc:
+            existing_vc.server_id = server.id
+            existing_vc.amnezia_client_id = resp.client.id
+            existing_vc.client_name = client_name
+            existing_vc.config_url = resp.client.config
+            existing_vc.protocol = resp.client.protocol
+            existing_vc.status = VpnClientStatus.active
+            vc = existing_vc
+        else:
+            vc = await vc_repo.create(
+                subscription_id=sub.id,
+                server_id=server.id,
+                amnezia_client_id=resp.client.id,
+                client_name=client_name,
+                config_url=resp.client.config,
+                protocol=resp.client.protocol,
+            )
         await server_repo.increment_clients(server.id)
 
         sub.status = SubscriptionStatus.active
@@ -516,6 +647,15 @@ class BillingService:
                     vc.amnezia_client_id,
                     e,
                 )
+            # The old client is being removed from old_server here,
+            # unconditionally, regardless of what happens with the new
+            # server below (including create_client failing and this whole
+            # function re-raising). Decrementing now — rather than later,
+            # only on the overall success path — keeps current_clients
+            # accurate even when reissue fails partway through: otherwise
+            # old_server's count stays permanently inflated by one for a
+            # client that no longer exists there.
+            await server_repo.decrement_clients(old_server.id)
 
         server = await server_repo.select_server()
         if not server:
@@ -524,13 +664,40 @@ class BillingService:
         client_name = f"tg_{sub.user_id}_{sub.id}"
         amnezia = AmneziaClient(base_url=server.base_url, api_key=server.api_key)
         req = CreateClientRequest(clientName=client_name, protocol=server.protocol, expiresAt=None)
-        async with redis_lock(f"vpn-server:{server.id}"):
-            resp = await amnezia.create_client(req)
+        try:
+            async with redis_lock(f"vpn-server:{server.id}"):
+                resp = await amnezia.create_client(req)
+        except (AmneziaError, LockTimeoutError) as e:
+            logger.error("Reissue failed to create client on server %d: %s", server.id, e)
+            sub.status = SubscriptionStatus.pending_provisioning
+            sub.retry_count = (sub.retry_count or 0) + 1
+            if vc:
+                # The old client was already best-effort deleted from
+                # old_server above (and its count decremented) — mark this
+                # row deleted so the next retry cycle's _provision_subscription
+                # correctly treats it as "no client exists, create fresh"
+                # (its `status != deleted` check gates the enable_client
+                # branch) instead of endlessly retrying enable_client against
+                # a client that no longer exists on any server.
+                vc.status = VpnClientStatus.deleted
+            await audit.log(
+                AuditAction.provisioning_failed,
+                user_id=sub.user_id,
+                entity_type="subscription",
+                entity_id=sub.id,
+                details=str(e),
+            )
+            # Re-raise so the API layer returns 503 instead of a bare 200
+            # with no config_url — the caller (admin, via the bot) needs to
+            # know this attempt didn't produce a usable device.
+            raise
 
-        if old_server and old_server.id != server.id:
-            await server_repo.decrement_clients(old_server.id)
-        if not (old_server and old_server.id == server.id):
-            await server_repo.increment_clients(server.id)
+        # old_server's count was already decremented right after the
+        # best-effort delete above (unconditionally, regardless of which
+        # server gets selected next), so this increment is no longer paired
+        # with a matching decrement at the same point in time and needs no
+        # "only if the server changed" special-casing.
+        await server_repo.increment_clients(server.id)
 
         if vc:
             vc.server_id = server.id

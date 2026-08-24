@@ -9,10 +9,9 @@ import uuid
 
 import structlog
 from fastapi import FastAPI, Request, Response
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from api.routers import admin, connect, payments, subscriptions, users
+from api.routers import admin, connect, payments, subscriptions, trial, users
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
@@ -35,18 +34,21 @@ app = FastAPI(
     docs_url="/docs" if os.getenv("ENVIRONMENT") != "production" else None,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# No CORSMiddleware: every route here is either called server-to-server by
+# the bot (a plain httpx client — CORS is a browser-enforced mechanism and
+# doesn't apply to it at all) or is /connect/{token}, a plain HTML page with
+# <a href>/window.location.href navigation and no fetch()/XHR back to this
+# API. There is no legitimate browser cross-origin caller to support, so an
+# open CORS policy only widened the attack surface for nothing. If a
+# browser-based admin panel is added later, scope this to its exact origin
+# rather than reopening allow_origins=["*"].
 
 # Routers
 app.include_router(payments.router, prefix="/api/v1/payments", tags=["payments"])
 app.include_router(subscriptions.router, prefix="/api/v1/subscriptions", tags=["subscriptions"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
+app.include_router(trial.router, prefix="/api/v1/trial", tags=["trial"])
 # Public, unauthenticated — the landing page behind the "Open in Amnezia"
 # button. No /api/v1 prefix, no verify_internal_key. See connect.py docstring.
 app.include_router(connect.router, tags=["public"])

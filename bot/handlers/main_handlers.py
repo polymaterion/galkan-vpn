@@ -11,9 +11,10 @@ import html
 import logging
 from typing import Any
 
+import httpx
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     BufferedInputFile,
@@ -39,6 +40,7 @@ from bot.keyboards.keyboards import (
     language_picker,
     main_menu,
     payment_method_menu,
+    trial_confirm_keyboard,
 )
 from bot.locales import t
 from bot.payments.crypto_pay import crypto_pay
@@ -111,9 +113,15 @@ async def _edit_ui_message(
         return False
 
 
-async def _main_view(lang: str) -> tuple[str, InlineKeyboardMarkup]:
+async def _main_view(lang: str, telegram_id: int | None = None) -> tuple[str, InlineKeyboardMarkup]:
     price = await _get_price_stars()
-    return t("welcome", lang), main_menu(lang, price)
+    show_trial = False
+    if telegram_id is not None:
+        try:
+            show_trial = await billing_client.trial_eligible(telegram_id)
+        except Exception as exc:
+            logger.warning("trial_eligible check failed: %s", exc)
+    return t("welcome", lang), main_menu(lang, price, show_trial=show_trial)
 
 
 async def _devices_view(
@@ -217,7 +225,9 @@ async def _resolve_screen(
     screen = entry.get("screen", "main")
     params = entry.get("params", {})
     if screen == "main":
-        text, markup = await _main_view(lang)
+        text, markup = await _main_view(lang, message.chat.id)
+    elif screen == "trial":
+        text, markup = t("trial_confirm_text", lang), trial_confirm_keyboard(lang)
     elif screen == "devices":
         text, markup = await _devices_view(message.chat.id, lang)
     elif screen == "device_card":
@@ -243,7 +253,7 @@ async def _resolve_screen(
     elif screen == "provisioning":
         text, markup = t("provisioning_pending", lang), back_keyboard(lang)
     else:
-        text, markup = await _main_view(lang)
+        text, markup = await _main_view(lang, message.chat.id)
         await navigation.reset(state)
     return text, markup
 
@@ -323,12 +333,30 @@ async def _send_key(bot: Bot, chat_id: int, lang: str, telegram_id: int, sub_id:
 # --- Root and stack navigation ------------------------------------------------
 
 @router.message(Command("start"))
-async def cmd_start(msg: Message, state: FSMContext, lang: str):
+async def cmd_start(msg: Message, state: FSMContext, lang: str, command: CommandObject = None):
     if not lang:
         await msg.answer(t("language_prompt"), reply_markup=language_picker())
         return
+
+    # Deep link for the trial: t.me/<bot>?start=trial. Works the same for
+    # brand-new users and for anyone who already has a chat with the bot —
+    # LanguageMiddleware already ran get_or_create() for this user before we
+    # get here, so by this point "new" vs "returning" makes no difference;
+    # the only gate left is trial_eligible() (not yet used, trial plan
+    # exists). Always routes through the confirm screen rather than
+    # auto-granting, even for brand-new users, so a mistaken tap on an old
+    # shared link can't silently burn someone's one-time trial.
+    deep_link_payload = (command.args or "").strip() if command else ""
+    if deep_link_payload == "trial":
+        await navigation.reset(state)
+        await navigation.push(state, "trial")
+        text, markup = t("trial_confirm_text", lang), trial_confirm_keyboard(lang)
+        ui_message = await msg.answer(text, reply_markup=markup)
+        await navigation.set_ui_message(state, ui_message.message_id)
+        return
+
     await navigation.reset(state)
-    text, markup = await _main_view(lang)
+    text, markup = await _main_view(lang, msg.chat.id)
     ui_message = await msg.answer(text, reply_markup=markup)
     await navigation.set_ui_message(state, ui_message.message_id)
 
@@ -346,6 +374,20 @@ async def cb_back(cb: CallbackQuery, state: FSMContext, lang: str):
     if entry["screen"].startswith("admin_"):
         # Admin handlers use the same stack primitive; the admin root is the
         # only admin target needed when going one level back.
+        #
+        # Re-check admin status here even though every push onto an admin_*
+        # screen already required it: an admin removed from ADMIN_IDS
+        # mid-session still has that entry sitting in their FSM stack (it
+        # isn't tied to the admin list and isn't invalidated when the config
+        # changes), and an ordinary back-tap would otherwise render the
+        # admin panel for them with no further gate.
+        if cb.from_user.id not in settings.admin_ids_list:
+            await navigation.reset(state, "main")
+            text, markup = await _main_view(lang, cb.message.chat.id)
+            await _edit_view(cb.message, state, text, markup)
+            await cb.answer(t("adm_no_access", lang), show_alert=True)
+            return
+
         from bot.keyboards.keyboards import admin_menu
 
         await _edit_view(cb.message, state, t("adm_panel_title", lang), admin_menu(lang))
@@ -392,6 +434,52 @@ async def cb_devices(cb: CallbackQuery, state: FSMContext, lang: str):
     await navigation.push(state, "devices")
     await _render_entry(cb.message, state, lang, await navigation.current(state))
     await cb.answer()
+
+
+@router.callback_query(F.data == "nav:trial")
+async def cb_trial_menu(cb: CallbackQuery, state: FSMContext, lang: str):
+    await navigation.push(state, "trial")
+    await _render_entry(cb.message, state, lang, await navigation.current(state))
+    await cb.answer()
+
+
+@router.callback_query(F.data == "trial:activate")
+async def cb_trial_activate(cb: CallbackQuery, state: FSMContext, lang: str):
+    await cb.answer(t("trial_granting", lang))
+    try:
+        await billing_client.grant_trial(
+            cb.from_user.id,
+            cb.from_user.username,
+            cb.from_user.first_name,
+            cb.from_user.last_name,
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 400:
+            # "Trial already used" or "No trial plan configured" — either
+            # way there's nothing to retry, just explain and go back to a
+            # normal main screen (which will no longer offer the button).
+            logger.info("grant_trial rejected for %s: %s", cb.from_user.id, exc.response.text)
+            await navigation.reset(state)
+            text, markup = await _main_view(lang, cb.message.chat.id)
+            await _edit_view(cb.message, state, text, markup)
+            await cb.message.answer(t("trial_already_used", lang))
+        else:
+            logger.error("grant_trial failed for %s: %s", cb.from_user.id, exc)
+            await cb.message.answer(t("trial_error", lang))
+        return
+    except Exception as exc:
+        logger.error("grant_trial failed for %s: %s", cb.from_user.id, exc)
+        await cb.message.answer(t("trial_error", lang))
+        return
+
+    # Provisioning runs synchronously inside grant_trial() the same way a
+    # payment does, so we can render straight through to devices — the key
+    # is normally already there. If provisioning hit a retryable error the
+    # subscription is left pending_provisioning and shows up as "creating"
+    # in the devices list, same as with a paid purchase.
+    await navigation.reset(state)
+    await navigation.push(state, "devices")
+    await _render_entry(cb.message, state, lang, await navigation.current(state))
 
 
 @router.callback_query(F.data.startswith("nav:device:"))

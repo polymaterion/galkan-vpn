@@ -60,6 +60,7 @@ class VpnClientStatus(str, enum.Enum):
 
 class AuditAction(str, enum.Enum):
     subscription_created = "subscription_created"
+    trial_granted = "trial_granted"
     subscription_renewed = "subscription_renewed"
     subscription_expired = "subscription_expired"
     subscription_disabled = "subscription_disabled"
@@ -89,6 +90,11 @@ class User(Base, TimestampMixin):
     # None = language not chosen yet (bot shows the picker on /start).
     # "ru" or "tk" once chosen.
     language: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    # Set the first (and only) time this user is granted a trial
+    # subscription — via auto-grant on first /start or via the
+    # /start=trial deep link for users who already existed. Guards
+    # against getting a second free trial through either path.
+    trial_used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     subscriptions: Mapped[list["Subscription"]] = relationship(back_populates="user")
     orders: Mapped[list["Order"]] = relationship(back_populates="user")
@@ -105,6 +111,12 @@ class Plan(Base, TimestampMixin):
     price_stars: Mapped[int] = mapped_column(Integer, nullable=False)     # XTR
     price_usdt: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Marks the free-trial plan (price should be 0/0, duration_days=3).
+    # BillingService.grant_trial() looks up the plan with this flag set
+    # rather than a hardcoded plan_id, and get_active_plan() (used for the
+    # paid purchase flow) explicitly excludes it so the trial never shows
+    # up as something purchasable.
+    is_trial: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     orders: Mapped[list["Order"]] = relationship(back_populates="plan")
     subscriptions: Mapped[list["Subscription"]] = relationship(back_populates="plan")

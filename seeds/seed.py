@@ -79,7 +79,7 @@ async def seed():
         # only as an internal/admin-facing label (e.g. if you inspect the
         # DB directly) — kept language-neutral on purpose so nobody mistakes
         # them for the real (translated) customer-facing text again.
-        result = await session.execute(select(Plan).limit(1))
+        result = await session.execute(select(Plan).where(Plan.is_trial == False).limit(1))
         if not result.scalar_one_or_none():
             plan = Plan(
                 name="Default VPN plan (internal label — not shown to users)",
@@ -88,11 +88,35 @@ async def seed():
                 price_stars=int(os.getenv("PLAN_PRICE_STARS", "100")),
                 price_usdt=float(os.getenv("PLAN_PRICE_USDT", "3.00")),
                 is_active=True,
+                is_trial=False,
             )
             session.add(plan)
             print("[seed] Created default plan")
         else:
             print("[seed] Plan already exists, skip")
+
+        # --- Trial plan ---
+        # Separate row, checked independently of the paid plan above so it
+        # also gets created on databases that already had a paid plan
+        # seeded before this feature existed. duration_days=3, price=0 —
+        # BillingService.grant_trial() looks this up via
+        # PlanRepository.get_trial_plan() (is_trial == True), and
+        # get_active_plan() (the paid purchase flow) explicitly excludes it.
+        result = await session.execute(select(Plan).where(Plan.is_trial == True).limit(1))
+        if not result.scalar_one_or_none():
+            trial_plan = Plan(
+                name="Free trial (internal label — not shown to users)",
+                description="Auto-granted on first /start, or via /start=trial deep link.",
+                duration_days=int(os.getenv("TRIAL_DURATION_DAYS", "3")),
+                price_stars=0,
+                price_usdt=0,
+                is_active=True,
+                is_trial=True,
+            )
+            session.add(trial_plan)
+            print("[seed] Created trial plan")
+        else:
+            print("[seed] Trial plan already exists, skip")
 
         # --- VPN Servers: only ones with real config in env ---
         result = await session.execute(select(VpnServer).limit(1))

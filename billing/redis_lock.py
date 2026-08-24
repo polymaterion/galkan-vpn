@@ -59,7 +59,14 @@ end
 # How long a lock is held before it auto-expires if the process holding it
 # crashes without releasing it. Must comfortably exceed the slowest realistic
 # amnezia-api call (docker exec + wg syncconf), with headroom.
-DEFAULT_LOCK_TTL_SECONDS = 30
+#
+# AmneziaClient's HTTP methods retry up to 3 times on 5xx/connection errors
+# (see integrations/amnezia/client.py's _retryable), with exponential backoff
+# between attempts. Worst case inside one lock-held call: 3 attempts at
+# AmneziaClient.DEFAULT_TIMEOUT (15s) each, plus waits of ~2s and ~4s between
+# them ≈ 51s. TTL must exceed that, or the lock can expire mid-retry and
+# reopen the exact concurrent-write race it exists to prevent.
+DEFAULT_LOCK_TTL_SECONDS = 75
 
 # How long a caller waits to acquire the lock before giving up.
 DEFAULT_WAIT_TIMEOUT_SECONDS = 20

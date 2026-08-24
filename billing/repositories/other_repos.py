@@ -24,8 +24,20 @@ class PlanRepository:
         self.session = session
 
     async def get_active_plan(self) -> Optional[Plan]:
+        """The purchasable plan shown to customers. Explicitly excludes
+        is_trial=True — the trial plan must never appear as something
+        buyable, it's only ever assigned via BillingService.grant_trial()."""
         result = await self.session.execute(
-            select(Plan).where(Plan.is_active == True).order_by(Plan.id).limit(1)
+            select(Plan)
+            .where(Plan.is_active == True, Plan.is_trial == False)
+            .order_by(Plan.id)
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_trial_plan(self) -> Optional[Plan]:
+        result = await self.session.execute(
+            select(Plan).where(Plan.is_trial == True).order_by(Plan.id).limit(1)
         )
         return result.scalar_one_or_none()
 
